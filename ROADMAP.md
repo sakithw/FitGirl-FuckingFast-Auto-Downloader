@@ -9,27 +9,41 @@
 ## Phase 2 — Page detection
 
 - [x] Build a testable FuckingFast host adapter and local mock HTML fixtures.
-- [x] Detect the exact hostname already listed in the manifest and report an unverified production control state.
-- [x] Add read-only content-script diagnostics and bounded fixture observer tests.
-- [ ] Inspect real download pages before defining production selectors. Capture sanitized HTML for initial, countdown, ready, and error states; URL patterns; timing; and evidence distinguishing the genuine download control from ads.
-- [ ] Complete an unpacked-extension Chrome smoke test on a real supported page.
+- [x] Detect the exact hostname and observed file-page shape supplied from one saved HTML page.
+- [x] Add evidence-based, read-only control detection, sanitized fixtures, diagnostics, and bounded observer tests.
+- [ ] Verify the observed control against additional real page samples, including initial, countdown, ready, and error states and nearby ads.
+- [x] Complete an unpacked-extension Chrome detection check on a real supported page. User reported `candidate; valid=1; invalid=0`.
+
+## Phase 2.5 — Live browser verification
+
+- [x] Review host, endpoint, file ID, visibility, and duplicate-control checks; prepare privacy-safe diagnostics.
+- [x] Add `docs/phase2-live-test.md` with a two-file manual Chrome procedure and evidence checklist.
+- [x] Run the automated browser fixture suite, including fragment-free URL regressions: 43 passed in headless Chrome.
+- [x] Confirm real Chrome content-script detection. User reported `candidate; valid=1; invalid=0`; the earlier headless command-line load attempt remains inconclusive.
+- [ ] Observe the first and second manual clicks on two authorized file pages and record ads, htmx requests, and browser download events. **NOT TESTED.**
 
 ## Phase 3 — Auto-clicking
 
-- Add a stored ON/OFF preference and activate only a verified control when enabled.
-- Handle dynamic rendering and ordinary countdowns with bounded observation and retries.
-- Prevent repeated clicks; ignore advertisements, popups, CAPTCHAs, and access controls.
+- [x] Accept verified file-page URLs with or without a filename fragment and with optional query parameters.
+- [x] Add an OFF-by-default toggle and a single guarded click on one verified control.
+- [x] Use bounded dynamic detection, an atomic worker claim, duplicate prevention, and manual fallback. No automatic second click or retry.
+- [x] Observe matching `chrome.downloads` events and display detection, attempt, download, and error states in the popup.
+- [x] Cover the MVP with mock browser tests; no real files are downloaded by the suite.
+- [ ] Test one automatic click on a real file in Chrome and verify its first-click effect, popup behavior, and download correlation.
+- [ ] Verify whether the site's second-click claim and browser user-activation behavior affect future design.
 
 ## Phase 4 — Download confirmation
 
-- Add the `downloads` permission only when implementing download event monitoring.
-- Correlate a user-opened supported page with a real `chrome.downloads` event, handle errors, and avoid duplicate counts.
+- [x] Add the `downloads` permission for MVP start and interruption monitoring.
+- [ ] Validate referrer-based correlation on live downloads and investigate missing referrers or redirects before claiming broad reliability.
+- [ ] Correlate a user-opened supported page with real events across more site states, handle errors, and avoid duplicate counts.
 - Keep counters and status in extension storage without collecting browsing history or transmitting data.
 
 ## Phase 5 — Popup UI
 
-- Provide a working ON/OFF toggle, current status, counters, and actionable errors.
-- Persist preferences and display status from the worker consistently across popup openings.
+- [x] Provide a working ON/OFF toggle and MVP detection, attempt, download, error, and manual-fallback status.
+- [ ] Add counters and finish UI validation across popup openings and tab changes.
+- [x] Persist the preference locally and show session status from the worker.
 
 ## Phase 6 — Testing and release
 

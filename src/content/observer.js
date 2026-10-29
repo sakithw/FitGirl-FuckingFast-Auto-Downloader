@@ -2,41 +2,54 @@
 
 // Read-only helper for later verified selectors and fixture tests. Every watch
 // has a finite lifetime, and disconnect() clears both pending timers.
-function watchForCandidate(root, selector, onResult, options = {}) {
+function watchForCandidate(root, detectorOrSelector, onResult, options = {}) {
   const debounceMs = options.debounceMs ?? 50;
   const timeoutMs = options.timeoutMs ?? 5000;
-  if (!selector || !Number.isFinite(debounceMs) || debounceMs < 0 ||
+  const onActivity = options.onActivity || (() => {});
+  const detector = typeof detectorOrSelector === "function" ? detectorOrSelector :
+    (scope) => globalThis.FFAD.fuckingFast.detectCandidate(scope, detectorOrSelector);
+  if (!detectorOrSelector || !Number.isFinite(debounceMs) || debounceMs < 0 ||
       !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new TypeError("A selector and finite, nonnegative timing are required");
+    throw new TypeError("A detector or selector and finite, nonnegative timing are required");
   }
 
   let active = true;
   let debounceTimer = null;
   const observer = new MutationObserver(() => {
     if (debounceTimer !== null) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(check, debounceMs);
+    debounceTimer = setTimeout(() => check(true), debounceMs);
   });
 
-  function disconnect() {
+  function disconnect(reason = "manual") {
     if (!active) return;
     active = false;
     observer.disconnect();
     clearTimeout(debounceTimer);
     clearTimeout(deadlineTimer);
+    onActivity(reason);
   }
 
-  function check() {
+  function check(fromMutation = false) {
     debounceTimer = null;
     if (!active) return;
-    const result = globalThis.FFAD.fuckingFast.detectCandidate(root, selector);
+    if (fromMutation) onActivity("recheck");
+    const result = detector(root);
     onResult(result);
-    if (result.status === "candidate" || result.status === "ambiguous") disconnect();
+    if (options.stopOnCandidate !== false &&
+        (result.status === "candidate" || result.status === "ambiguous")) disconnect("resolved");
   }
 
-  const deadlineTimer = setTimeout(disconnect, timeoutMs);
-  observer.observe(root, { childList: true, subtree: true });
+  const deadlineTimer = setTimeout(() => disconnect("timeout"), timeoutMs);
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: true,
+    attributeFilter: ["class", "hx-post", "hx-swap", "rel", "href", "hidden", "inert", "style", "aria-hidden", "aria-disabled", "disabled"]
+  });
+  onActivity("started");
   check();
-  return disconnect;
+  return () => disconnect("manual");
 }
 
 globalThis.FFAD = globalThis.FFAD || {};

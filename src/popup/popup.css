@@ -14,6 +14,40 @@ h1 {
   line-height: 1.25;
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.status-list {
+  margin: 12px 0;
+}
+
+.status-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid #e8eaed;
+}
+
+.status-list dt { color: #5f6368; }
+.status-list dd { margin: 0; text-align: right; font-weight: 600; }
+
+.error {
+  color: #b3261e;
+}
+
 p {
   margin: 0 0 10px;
 }
@@ -25,6 +59,8 @@ p {
   background: #fff2cf;
   font-weight: 600;
 }
+
+[hidden] { display: none !important; }
 
 .version {
   margin-bottom: 0;

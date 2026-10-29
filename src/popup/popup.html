@@ -9,8 +9,18 @@
   <body>
     <main>
       <h1>FuckingFast Auto Downloader</h1>
-      <p class="status" role="status" id="status">Automation unavailable in Phase 2</p>
-      <p>Host detection is read only. Download controls are not verified yet.</p>
+      <label class="toggle-row" for="auto-enabled">
+        <span>Auto Download</span>
+        <input id="auto-enabled" type="checkbox" aria-describedby="toggle-help">
+      </label>
+      <p id="toggle-help">OFF by default. Turn ON, then open or reload one file page.</p>
+      <dl class="status-list" aria-live="polite">
+        <div><dt>Detection</dt><dd id="detection">Checking…</dd></div>
+        <div><dt>Attempt</dt><dd id="attempt">None</dd></div>
+        <div><dt>Download</dt><dd id="download">Not confirmed</dd></div>
+      </dl>
+      <p class="status" id="fallback" hidden>Click the verified button manually if needed.</p>
+      <p class="error" id="error" role="status" hidden></p>
       <p class="version" id="version"></p>
     </main>
     <script src="popup.js"></script>

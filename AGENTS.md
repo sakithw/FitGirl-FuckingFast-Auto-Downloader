@@ -4,7 +4,7 @@
 
 - Build a Chrome Manifest V3 extension with vanilla JavaScript, HTML, and CSS. Avoid build tooling unless a later phase needs it.
 - Keep responsibilities separate: `src/hosts/` for host-specific detection, `src/content/` for page interaction, `src/background/` for download monitoring and worker coordination, and `src/popup/` for the user interface.
-- Phase 2 permits read-only host and DOM detection. Keep production selectors inactive until inspected page evidence supports them. Do not add clicking, download monitoring, or an enabled automation toggle until the relevant roadmap phase is authorized.
+- Phase 3 permits one automatic click on a verified control per file page when the user has explicitly enabled Auto Download. Keep the preference OFF by default, revalidate before clicking, and never synthesize a second click or retry after an unconfirmed download.
 - Support FuckingFast only. Users open individual file pages themselves.
 
 ## Safety and privacy
