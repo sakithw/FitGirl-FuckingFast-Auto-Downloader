@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FitGirl-FuckingFast Auto Downloader",
   "version": "0.1.0",
-  "description": "Phase 1 scaffold for a user-controlled FuckingFast download assistant.",
+  "description": "Read-only Phase 2 detection scaffold for a user-controlled FuckingFast download assistant.",
   "background": {
     "service_worker": "src/background/service-worker.js"
   },
@@ -13,7 +13,7 @@
   "content_scripts": [
     {
       "matches": ["https://fuckingfast.co/*"],
-      "js": ["src/content/index.js"],
+      "js": ["src/hosts/fuckingfast.js", "src/content/index.js"],
       "run_at": "document_idle"
     }
   ]

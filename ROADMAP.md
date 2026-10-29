@@ -8,9 +8,11 @@
 
 ## Phase 2 — Page detection
 
-- Build a testable FuckingFast host adapter and local mock HTML fixtures.
-- Inspect real download pages before defining production selectors. Capture sanitized HTML for initial, countdown, ready, and error states; URL patterns; timing; and evidence distinguishing the genuine download control from ads.
-- Detect supported pages and report a clear unsupported or unverified state.
+- [x] Build a testable FuckingFast host adapter and local mock HTML fixtures.
+- [x] Detect the exact hostname already listed in the manifest and report an unverified production control state.
+- [x] Add read-only content-script diagnostics and bounded fixture observer tests.
+- [ ] Inspect real download pages before defining production selectors. Capture sanitized HTML for initial, countdown, ready, and error states; URL patterns; timing; and evidence distinguishing the genuine download control from ads.
+- [ ] Complete an unpacked-extension Chrome smoke test on a real supported page.
 
 ## Phase 3 — Auto-clicking
 
