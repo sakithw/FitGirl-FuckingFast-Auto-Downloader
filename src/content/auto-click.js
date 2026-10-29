@@ -5,7 +5,6 @@
 function createAutoClickEngine({ detect, claim, report, isEnabled = async () => true,
   onEvent = () => {} }) {
   let state = "idle";
-  let claimSettled = Promise.resolve();
 
   async function clickVerified(first, expiresAt = Infinity) {
     let stillEnabled = false;
@@ -27,14 +26,16 @@ function createAutoClickEngine({ detect, claim, report, isEnabled = async () => 
       return "grant-expired";
     }
 
+    let clickedAt;
     try {
+      clickedAt = Date.now();
       onEvent("click-attempted");
       current.element.click();
     } catch {
       try { await report("click-error"); } catch { /* claim remains recorded */ }
       return "click-error";
     }
-    try { await report("clicked"); } catch { /* claim remains recorded */ }
+    try { await report("clicked", clickedAt); } catch { /* claim remains recorded */ }
     return "clicked";
   }
 
@@ -46,38 +47,17 @@ function createAutoClickEngine({ detect, claim, report, isEnabled = async () => 
 
     let grant;
     try {
-      claimSettled = Promise.resolve().then(claim);
-      grant = await claimSettled;
+      grant = await Promise.resolve().then(claim);
     } catch {
       state = "used";
       return "claim-error";
-    }
-    if (grant?.queued) {
-      state = "queued";
-      return "attempt-queued";
     }
     state = "used";
     if (!grant?.allowed) return grant?.reason || "not-allowed";
     return clickVerified(first);
   }
 
-  async function resume(expiresAt = Infinity) {
-    if (state === "requesting") {
-      await claimSettled;
-      await Promise.resolve();
-    }
-    if (state !== "queued") return "duplicate-attempt";
-    state = "used";
-    const first = detect();
-    if (first.status !== "candidate" || first.count !== 1 || !first.element) {
-      try { await report("invalidated"); } catch { /* claim remains recorded */ }
-      return "invalidated";
-    }
-    return clickVerified(first, expiresAt);
-  }
-
-  return Object.freeze({ attempt, resume,
-    canAcceptQueuedGrant: () => state === "requesting" || state === "queued" });
+  return Object.freeze({ attempt });
 }
 
 globalThis.FFAD = globalThis.FFAD || {};

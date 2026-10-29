@@ -9,10 +9,11 @@ const controller = globalThis.FFAD.createDownloadController({
     const response = await chrome.tabs.sendMessage(tabId, message, { documentId });
     return response?.accepted === true;
   },
-  scheduleDeadline: (when) => chrome.alarms.create("ffad-queue", { when }),
-  clearDeadline: () => chrome.alarms.clear("ffad-queue"),
+  scheduleDeadline: (when) => chrome.alarms.create("ffad-deadline", { when }),
+  clearDeadline: () => chrome.alarms.clear("ffad-deadline"),
+  lookupDownload: async (id) => (await chrome.downloads.search({ id }))[0] || null,
   onEvent: (code, details) => {
-    const fields = ["tMs", "sinceClaimMs", "sinceClickMs", "queueWaitMs", "queueDepth", "reason"]
+    const fields = ["tMs", "sinceClaimMs", "sinceClickMs", "pendingCount", "value", "reason"]
       .filter((key) => details[key] !== null && details[key] !== undefined)
       .map((key) => `${key}=${details[key]}`);
     console.info(`[FFAD] ${code}; ${fields.join("; ")}.`);
@@ -51,7 +52,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "ffad-queue") controller.tick().catch(() => {
+  if (alarm.name === "ffad-deadline") controller.tick().catch(() => {
     console.error("[FFAD] Queue deadline could not be processed.");
   });
 });

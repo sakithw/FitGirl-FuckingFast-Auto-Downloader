@@ -4,13 +4,12 @@
 const host = globalThis.FFAD.fuckingFast;
 if (host.isSupportedUrl(location.href)) {
   console.info("[FFAD] Supported host detected.");
-  const originalPagePath = new URL(location.href).pathname;
   const contentStartedAt = performance.now();
   const elapsed = () => Math.max(0, Math.round(performance.now() - contentStartedAt));
   let previous = "";
   let recheckLogged = false;
   let attemptStarted = false;
-  let queuedAtPageMs = null;
+  let previousFilenameEvidence = null;
   const enabledAtLoad = chrome.storage.local.get({ autoEnabled: false })
     .then((settings) => settings.autoEnabled === true)
     .catch(() => false);
@@ -25,32 +24,15 @@ if (host.isSupportedUrl(location.href)) {
   const engine = globalThis.FFAD.createAutoClickEngine({
     detect,
     claim: () => send("CLAIM_ATTEMPT"),
-    report: (result) => send("ATTEMPT_RESULT", { result }),
+    report: (result, clickedAt) => send("ATTEMPT_RESULT", { result, clickedAt }),
     isEnabled: async () => (await chrome.storage.local.get({ autoEnabled: false })).autoEnabled === true,
     onEvent: (code) => console.info(`[FFAD] ${code}; page t+${elapsed()}ms.`)
   });
 
   const reportOutcome = (outcome) => {
-    if (outcome === "attempt-queued") queuedAtPageMs = elapsed();
     console.info(`[FFAD] Automatic attempt: ${outcome}; page t+${elapsed()}ms.`);
     if (outcome === "clicked") setTimeout(() => { send("NO_DOWNLOAD"); }, 16000);
   };
-
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "FFAD_QUEUE_GRANTED") return;
-    if (!engine.canAcceptQueuedGrant() || !host.isSupportedUrl(location.href) ||
-        new URL(location.href).pathname !== originalPagePath) {
-      sendResponse({ accepted: false });
-      return;
-    }
-    console.info(`[FFAD] queue-grant-received; page t+${elapsed()}ms; queueWaitMs=${
-      queuedAtPageMs === null ? "unknown" : elapsed() - queuedAtPageMs}.`);
-    sendResponse({ accepted: true });
-    engine.resume(message.expiresAt).then(reportOutcome).catch(() => {
-      send("ATTEMPT_RESULT", { result: "click-error" });
-      console.error("[FFAD] Automatic attempt: click-error.");
-    });
-  });
 
   const disconnect = globalThis.FFAD.watchForCandidate(document, detect,
     async (result) => {
@@ -61,9 +43,19 @@ if (host.isSupportedUrl(location.href)) {
         if (result.status === "error") console.error(message);
         else console.info(message);
       }
+      let expectedFilename = null;
+      if (result.status === "candidate") {
+        try { expectedFilename = host.expectedFilename(document, location.href); }
+        catch { console.info("[FFAD] Filename evidence unavailable."); }
+        const present = expectedFilename !== null;
+        if (present !== previousFilenameEvidence) {
+          previousFilenameEvidence = present;
+          console.info(`[FFAD] page-filename-evidence-present=${present}.`);
+        }
+      }
       const reported = send("PAGE_STATUS", {
         status: result.status, valid: result.count, invalid: result.invalidCount,
-        reason: result.reason
+        reason: result.reason, expectedFilename
       });
       if (result.status !== "candidate" || attemptStarted) return;
       attemptStarted = true;

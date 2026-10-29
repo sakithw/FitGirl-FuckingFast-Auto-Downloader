@@ -1,11 +1,7 @@
 "use strict";
 
 const FFAD_TIMEOUT_MS = 15000;
-const FFAD_MATCH_WINDOW_MS = FFAD_TIMEOUT_MS;
 const FFAD_STATE_PREFIX = "ffad:tab:";
-const FFAD_QUEUE_SEQUENCE_KEY = "ffad:queue-sequence";
-const FFAD_MAX_QUEUE = 16;
-const FFAD_QUEUE_MAX_AGE_MS = 300000;
 
 async function ffadFingerprint(value) {
   const bytes = new TextEncoder().encode(value);
@@ -14,8 +10,8 @@ async function ffadFingerprint(value) {
 }
 
 function createDownloadController({ storage, getEnabled, now = Date.now, fingerprint = ffadFingerprint,
-  sendToTab = async () => false, scheduleDeadline = async () => {}, clearDeadline = async () => {},
-  onEvent = () => {} }) {
+  scheduleDeadline = async () => {}, clearDeadline = async () => {},
+  lookupDownload = async () => null, onEvent = () => {} }) {
   const host = globalThis.FFAD.fuckingFast;
   const workerStartedAt = now();
   const elapsed = (since) => Math.max(0, Math.round(now() - since));
@@ -27,37 +23,30 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     return next;
   };
   const keyFor = (tabId) => `${FFAD_STATE_PREFIX}${tabId}`;
-
-  function pageFromSender(sender, requireFilePage = true) {
+  const pageFromSender = (sender, requireFilePage = true) => {
     if (!Number.isInteger(sender?.tab?.id) || sender.frameId !== 0 ||
         !host.isSupportedUrl(sender.url)) return null;
     const url = new URL(sender.url);
     if (requireFilePage && !/^\/[A-Za-z0-9_-]+$/.test(url.pathname)) return null;
     return { tabId: sender.tab.id, documentId: sender.documentId || `tab-${sender.tab.id}`,
       fingerprintInput: `${url.origin}${url.pathname}` };
-  }
-
-  function fresh(documentId) {
-    return { documentId, detection: "unknown", valid: 0, invalid: 0, reason: null,
-      attempt: "idle", download: "none", fallback: false, error: null,
-      attemptedAt: 0, clickedAt: 0, fingerprint: null, downloadId: null, queuedAt: 0, queueOrder: 0 };
-  }
-
-  function publicState(record) {
+  };
+  const fresh = (documentId) => ({
+    documentId, detection: "unknown", valid: 0, invalid: 0, reason: null,
+    attempt: "idle", download: "none", fallback: false, error: null,
+    attemptedAt: 0, clickedAt: 0, fingerprint: null, expectedFilenameHash: null,
+    downloadId: null, metadataCandidates: [], metadataDetails: [], metadataAmbiguous: false
+  });
+  const publicState = (record) => {
     if (!record) return { detection: "unknown", valid: 0, invalid: 0, reason: null,
       attempt: "idle", download: "none", fallback: false, error: null };
     const { detection, valid, invalid, reason, attempt, download, fallback, error } = record;
     return { detection, valid, invalid, reason, attempt, download, fallback, error };
-  }
-
-  async function getRecord(tabId) {
-    const key = keyFor(tabId);
-    return (await storage.get(key))[key];
-  }
-
-  async function putRecord(tabId, record) {
-    await storage.set({ [keyFor(tabId)]: record });
-  }
+  };
+  const getRecord = async (tabId) => (await storage.get(keyFor(tabId)))[keyFor(tabId)];
+  const putRecord = (tabId, record) => storage.set({ [keyFor(tabId)]: record });
+  const entries = (all) => Object.entries(all).filter(([key, record]) =>
+    key.startsWith(FFAD_STATE_PREFIX) && record && Number.isInteger(Number(key.slice(FFAD_STATE_PREFIX.length))));
 
   async function expire(tabId, record) {
     if (record?.download === "waiting" && now() - record.attemptedAt >= FFAD_TIMEOUT_MS) {
@@ -66,100 +55,23 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
       record.error = "No matching browser download was observed after one click.";
       await putRecord(tabId, record);
       emit("attempt-timed-out", { sinceClaimMs: elapsed(record.attemptedAt) });
+      return true;
     }
-    return record;
-  }
-
-  function tabEntries(all) {
-    return Object.entries(all).filter(([key, record]) =>
-      key.startsWith(FFAD_STATE_PREFIX) && record && Number.isInteger(Number(key.slice(FFAD_STATE_PREFIX.length))));
-  }
-
-  async function reconcile() {
-    const all = await storage.get(null);
-    for (const [key, record] of tabEntries(all)) {
-      const tabId = Number(key.slice(FFAD_STATE_PREFIX.length));
-      if (record.download === "waiting") await expire(tabId, record);
-      if (record.attempt === "queued" && now() - record.queuedAt >= FFAD_QUEUE_MAX_AGE_MS) {
-        const queueWaitMs = elapsed(record.queuedAt);
-        record.attempt = "failed";
-        record.fallback = true;
-        record.error = "Queued attempt expired. Click manually if needed.";
-        record.queuedAt = 0;
-        record.queueOrder = 0;
-        await putRecord(tabId, record);
-        emit("queue-expired", { queueWaitMs });
-      }
-    }
+    return false;
   }
 
   async function updateAlarm() {
     const all = await storage.get(null);
-    const deadlines = tabEntries(all).flatMap(([, record]) => {
-      if (record.download === "waiting") return [record.attemptedAt + FFAD_TIMEOUT_MS];
-      if (record.attempt === "queued") return [record.queuedAt + FFAD_QUEUE_MAX_AGE_MS];
-      return [];
-    });
+    const deadlines = entries(all)
+      .filter(([, record]) => record.download === "waiting")
+      .map(([, record]) => record.attemptedAt + FFAD_TIMEOUT_MS);
     if (deadlines.length) await scheduleDeadline(Math.max(now() + 1000, Math.min(...deadlines)));
     else await clearDeadline();
   }
 
-  async function promoteNext() {
-    await reconcile();
+  async function reconcile() {
     const all = await storage.get(null);
-    if (tabEntries(all).some(([, record]) => record.download === "waiting")) {
-      await updateAlarm();
-      return;
-    }
-    const queued = tabEntries(all)
-      .filter(([, record]) => record.attempt === "queued")
-      .sort((a, b) => a[1].queueOrder - b[1].queueOrder);
-    if (!(await getEnabled())) {
-      for (const [key, record] of queued) {
-        record.attempt = "failed";
-        record.fallback = true;
-        record.error = "Auto Download was turned off while queued.";
-        record.queuedAt = 0;
-        record.queueOrder = 0;
-        await storage.set({ [key]: record });
-      }
-      if (queued.length) emit("automation-disabled");
-      await updateAlarm();
-      return;
-    }
-    for (const [key, record] of queued) {
-      const tabId = Number(key.slice(FFAD_STATE_PREFIX.length));
-      const queueWaitMs = elapsed(record.queuedAt);
-      record.attempt = "claimed";
-      record.download = "waiting";
-      record.attemptedAt = now();
-      record.queuedAt = 0;
-      record.queueOrder = 0;
-      await putRecord(tabId, record);
-      await updateAlarm();
-      emit("attempt-claimed", { sinceClaimMs: elapsed(record.attemptedAt) });
-      let acknowledged = false;
-      try {
-        acknowledged = await sendToTab(tabId, record.documentId, {
-          type: "FFAD_QUEUE_GRANTED", expiresAt: record.attemptedAt + FFAD_TIMEOUT_MS
-        });
-      } catch {
-        // Delivery may be uncertain. Wait for a matching download or timeout
-        // instead of risking a second simultaneous click.
-        emit("waiting-for-confirmation", { sinceClaimMs: elapsed(record.attemptedAt) });
-        return;
-      }
-      if (acknowledged) {
-        emit("next-attempt-released", { queueWaitMs, sinceClaimMs: elapsed(record.attemptedAt) });
-        return;
-      }
-      record.attempt = "failed";
-      record.download = "unconfirmed";
-      record.fallback = true;
-      record.error = "Queued page is no longer available. Click manually if needed.";
-      await putRecord(tabId, record);
-      emit("queue-delivery-rejected", { sinceClaimMs: elapsed(record.attemptedAt) });
-    }
+    for (const [key, record] of entries(all)) await expire(Number(key.slice(FFAD_STATE_PREFIX.length)), record);
     await updateAlarm();
   }
 
@@ -169,15 +81,17 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     const allowed = new Set(["candidate", "missing", "invalid", "ambiguous", "unsupported-page", "error"]);
     if (!allowed.has(message.status)) return { accepted: false };
     const existing = await getRecord(page.tabId);
-    const sameAttemptedPage = existing && existing.attemptedAt > 0 && existing.fingerprint ===
-      await fingerprint(page.fingerprintInput);
-    const record = existing?.documentId === page.documentId || sameAttemptedPage ?
-      existing : fresh(page.documentId);
+    const sameDocument = existing?.documentId === page.documentId;
+    const record = sameDocument ? existing : fresh(page.documentId);
     record.documentId = page.documentId;
     record.detection = message.status;
     record.valid = Number.isInteger(message.valid) ? Math.max(0, Math.min(message.valid, 99)) : 0;
     record.invalid = Number.isInteger(message.invalid) ? Math.max(0, Math.min(message.invalid, 99)) : 0;
     record.reason = typeof message.reason === "string" && /^[a-z-]{1,40}$/.test(message.reason) ? message.reason : null;
+    if (record.attempt === "idle" && message.status === "candidate") {
+      const name = host.normalizeFilename(message.expectedFilename);
+      record.expectedFilenameHash = name ? await fingerprint(`filename:${name}`) : null;
+    }
     await putRecord(page.tabId, record);
     return { accepted: true };
   }
@@ -186,56 +100,37 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     const page = pageFromSender(sender);
     if (!page) return { allowed: false, reason: "unsupported-page" };
     if (!(await getEnabled())) return { allowed: false, reason: "automation-disabled" };
-    const existing = await getRecord(page.tabId);
-    if (!existing || existing.documentId !== page.documentId ||
-        existing.detection !== "candidate" || existing.valid !== 1) {
+    const record = await getRecord(page.tabId);
+    if (!record || record.documentId !== page.documentId ||
+        record.detection !== "candidate" || record.valid !== 1) {
       return { allowed: false, reason: "no-candidate" };
     }
-    if (existing.attempt !== "idle") return { allowed: false, reason: "duplicate-attempt" };
-
-    await reconcile();
-    let all = await storage.get(null);
-    if (!tabEntries(all).some(([, record]) => record.download === "waiting") &&
-        tabEntries(all).some(([, record]) => record.attempt === "queued")) {
-      await promoteNext();
-      all = await storage.get(null);
-    }
-    const pageFingerprint = await fingerprint(page.fingerprintInput);
-    const activeOrQueued = tabEntries(all).filter(([, record]) =>
-      record.download === "waiting" || record.attempt === "queued");
-    if (activeOrQueued.some(([, record]) => record.fingerprint === pageFingerprint)) {
-      return { allowed: false, reason: "duplicate-attempt" };
-    }
-    if (activeOrQueued.length) {
-      const queuedCount = activeOrQueued.filter(([, record]) => record.attempt === "queued").length;
-      if (!sender.documentId || queuedCount >= FFAD_MAX_QUEUE) {
-        existing.attempt = "failed";
-        existing.fallback = true;
-        existing.error = !sender.documentId ? "This Chrome version cannot safely queue the page." :
-          "Automation queue is full. Click manually if needed.";
-        await putRecord(page.tabId, existing);
-        return { allowed: false, reason: !sender.documentId ? "queue-unavailable" : "queue-full" };
-      }
-      const sequence = ((await storage.get(FFAD_QUEUE_SEQUENCE_KEY))[FFAD_QUEUE_SEQUENCE_KEY] || 0) + 1;
-      await storage.set({ [FFAD_QUEUE_SEQUENCE_KEY]: sequence });
-      existing.attempt = "queued";
-      existing.fingerprint = pageFingerprint;
-      existing.queuedAt = now();
-      existing.queueOrder = sequence;
-      await putRecord(page.tabId, existing);
-      await updateAlarm();
-      emit("attempt-queued", { queueDepth: queuedCount + 1 });
-      return { allowed: false, queued: true, reason: "attempt-queued" };
-    }
-
-    existing.attempt = "claimed";
-    existing.download = "waiting";
-    existing.attemptedAt = now();
-    existing.fingerprint = pageFingerprint;
-    await putRecord(page.tabId, existing);
+    if (record.attempt !== "idle") return { allowed: false, reason: "already-attempted" };
+    record.attempt = "claimed";
+    record.download = "waiting";
+    record.attemptedAt = now();
+    record.fingerprint = await fingerprint(page.fingerprintInput);
+    await putRecord(page.tabId, record);
     await updateAlarm();
-    emit("attempt-claimed", { sinceClaimMs: elapsed(existing.attemptedAt) });
+    emit("attempt-claimed", { sinceClaimMs: 0 });
     return { allowed: true, reason: "attempt-started" };
+  }
+
+  async function confirmDownload(key, record, id, state, method) {
+    record.download = state === "interrupted" ? "interrupted" : "started";
+    record.downloadId = id;
+    record.metadataCandidates = [];
+    record.metadataDetails = [];
+    record.metadataAmbiguous = false;
+    record.fallback = state === "interrupted";
+    record.error = state === "interrupted" ? "Browser download was interrupted." : null;
+    await storage.set({ [key]: record });
+    emit(`download-matched-${method}`, { sinceClaimMs: elapsed(record.attemptedAt),
+      sinceClickMs: record.clickedAt ? elapsed(record.clickedAt) : null });
+    emit(state === "interrupted" ? "download-unconfirmed" : "attempt-confirmed",
+      { sinceClaimMs: elapsed(record.attemptedAt) });
+    await updateAlarm();
+    return true;
   }
 
   async function reportAttempt(message, sender) {
@@ -247,7 +142,8 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     }
     if (message.result === "clicked") {
       record.attempt = "clicked";
-      record.clickedAt = now();
+      record.clickedAt = Number.isFinite(message.clickedAt) &&
+        message.clickedAt >= record.attemptedAt && message.clickedAt <= now() ? message.clickedAt : now();
       emit("click-reported", { sinceClaimMs: elapsed(record.attemptedAt) });
     } else if (["invalidated", "click-error", "disabled-after-claim", "grant-expired"].includes(message.result)) {
       record.attempt = "failed";
@@ -255,130 +151,99 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
       record.fallback = true;
       record.error = message.result === "click-error" ? "Automatic click failed." :
         message.result === "disabled-after-claim" ? "Auto Download was turned off before clicking." :
-          message.result === "grant-expired" ? "Queued grant expired before clicking." :
-            "Control changed before clicking.";
+          message.result === "grant-expired" ? "Click grant expired." : "Control changed before clicking.";
     } else return { accepted: false };
     await putRecord(page.tabId, record);
-    if (record.attempt === "failed") await promoteNext();
     return { accepted: true };
   }
 
-  async function status(tabId) {
-    await promoteNext();
-    const enabled = await getEnabled();
-    if (!Number.isInteger(tabId)) return { enabled, ...publicState(null) };
-    const record = await getRecord(tabId);
-    return { enabled, ...publicState(record) };
+  async function matchFilename(key, record, id, path, state) {
+    const name = host.normalizeFilename(path, true);
+    if (!name || !record.expectedFilenameHash || !record.clickedAt) return false;
+    const hash = await fingerprint(`filename:${name}`);
+    if (hash !== record.expectedFilenameHash ||
+        now() - record.clickedAt > FFAD_TIMEOUT_MS) return false;
+    return confirmDownload(key, record, id, state, "filename");
   }
 
   async function downloadCreated(item, extensionId) {
-    const pending = tabEntries(await storage.get(null))
-      .filter(([, record]) => record.download === "waiting");
-    if (!pending.length) return false;
-    emit("download-event-received", { sinceClaimMs: elapsed(pending[0][1].attemptedAt) });
-    const unmatched = (reason) => {
-      emit("download-unmatched", { reason, sinceClaimMs: elapsed(pending[0][1].attemptedAt) });
-      return false;
-    };
-    if (!Number.isInteger(item?.id)) return unmatched("missing-download-id");
-    if (item.byExtensionId && item.byExtensionId !== extensionId) return unmatched("other-extension");
-    if (!item.referrer) return unmatched("missing-referrer");
-    let referrer;
-    try {
-      if (!host.isSupportedUrl(item.referrer)) return unmatched("unsupported-referrer");
-      const url = new URL(item.referrer);
-      if (!/^\/[A-Za-z0-9_-]+$/.test(url.pathname)) return unmatched("invalid-referrer-path");
-      referrer = await fingerprint(`${url.origin}${url.pathname}`);
-    } catch { return unmatched("invalid-referrer"); }
+    if (!Number.isInteger(item?.id) || (item.byExtensionId && item.byExtensionId !== extensionId)) return false;
     const startedAt = Date.parse(item.startTime);
-    if (!Number.isFinite(startedAt)) return unmatched("invalid-start-time");
-
+    if (!Number.isFinite(startedAt)) return false;
     const all = await storage.get(null);
-    const matches = tabEntries(all).filter(([, record]) =>
-      record.download === "waiting" &&
-      record.fingerprint === referrer && startedAt >= record.attemptedAt &&
-      startedAt <= record.attemptedAt + FFAD_MATCH_WINDOW_MS &&
-      now() - record.attemptedAt <= FFAD_MATCH_WINDOW_MS);
-    if (matches.length !== 1) {
-      const sameFile = pending.some(([, record]) => record.fingerprint === referrer);
-      return unmatched(matches.length > 1 ? "ambiguous-attempt" :
-        sameFile ? "outside-confirmation-window" : "referrer-mismatch");
+    const pending = entries(all).filter(([, record]) =>
+      record.download === "waiting" && record.attemptedAt <= startedAt &&
+      startedAt <= record.attemptedAt + FFAD_TIMEOUT_MS && now() - record.attemptedAt <= FFAD_TIMEOUT_MS);
+    if (!pending.length || entries(all).some(([, record]) => record.downloadId === item.id)) return false;
+    let matches = [];
+    if (item.referrer && host.isSupportedUrl(item.referrer)) {
+      const referrer = new URL(item.referrer);
+      const hash = await fingerprint(`${referrer.origin}${referrer.pathname}`);
+      matches = pending.filter(([, record]) => record.fingerprint === hash);
     }
+    if (matches.length !== 1 && item.filename) {
+      const nameHash = await fingerprint(`filename:${host.normalizeFilename(item.filename, true) || ""}`);
+      matches = pending.filter(([, record]) => record.expectedFilenameHash === nameHash &&
+        record.attempt === "clicked");
+    }
+    if (matches.length !== 1) return false;
     const [key, record] = matches[0];
-    emit("download-matched", { sinceClaimMs: elapsed(record.attemptedAt),
-      sinceClickMs: record.clickedAt ? elapsed(record.clickedAt) : null });
-    record.download = item.state === "interrupted" ? "interrupted" : "started";
-    record.downloadId = item.id;
-    record.fallback = item.state === "interrupted";
-    record.error = item.state === "interrupted" ? "Browser download was interrupted." : null;
-    await storage.set({ [key]: record });
-    emit(item.state === "interrupted" ? "download-unconfirmed" : "attempt-confirmed",
-      { sinceClaimMs: elapsed(record.attemptedAt) });
-    await promoteNext();
-    return true;
+    if (record.attempt === "claimed") {
+      record.metadataCandidates = [item.id];
+      record.metadataDetails = [{ id: item.id, startedAt, filenameHash: null, state: item.state }];
+      await storage.set({ [key]: record });
+      return false;
+    }
+    return confirmDownload(key, record, item.id, item.state, item.referrer ? "referrer" : "filename");
   }
 
   async function downloadChanged(delta) {
-    const state = delta?.state?.current;
-    if (!Number.isInteger(delta?.id) || (state !== "complete" && state !== "interrupted")) return false;
+    if (!Number.isInteger(delta?.id)) return false;
     const all = await storage.get(null);
-    const match = Object.entries(all).find(([key, record]) =>
-      key.startsWith(FFAD_STATE_PREFIX) && record?.downloadId === delta.id);
-    if (!match) return false;
-    const [key, record] = match;
-    record.download = state;
-    record.fallback = state === "interrupted";
-    record.error = state === "interrupted" ? "Browser download was interrupted." : null;
+    const match = entries(all).find(([key, record]) => record.download === "waiting" &&
+      record.metadataCandidates?.includes(delta.id));
+    if (match && delta.filename?.current) {
+      const [key, record] = match;
+      return matchFilename(key, record, delta.id, delta.filename.current, delta.state?.current);
+    }
+    if (!["complete", "interrupted"].includes(delta?.state?.current)) return false;
+    const completed = entries(all).find(([, record]) => record.downloadId === delta.id);
+    if (!completed) return false;
+    const [key, record] = completed;
+    record.download = delta.state.current;
+    record.fallback = delta.state.current === "interrupted";
+    record.error = record.fallback ? "Browser download was interrupted." : null;
     await storage.set({ [key]: record });
-    await promoteNext();
     return true;
   }
 
+  async function status(tabId) {
+    await reconcile();
+    const enabled = await getEnabled();
+    return { enabled, ...publicState(Number.isInteger(tabId) ? await getRecord(tabId) : null) };
+  }
+
   async function tabLoading(tabId) {
-    if (!Number.isInteger(tabId)) return;
     const record = await getRecord(tabId);
     if (!record) return;
     record.detection = "unknown";
     record.valid = 0;
     record.invalid = 0;
     record.reason = null;
-    if (record.attempt === "queued") {
-      record.attempt = "failed";
-      record.queuedAt = 0;
-      record.queueOrder = 0;
-      record.fallback = true;
-      record.error = "Page navigated before its queued attempt.";
-      emit("tab-navigated");
-    }
     await putRecord(tabId, record);
-    await promoteNext();
   }
 
   async function tabRemoved(tabId) {
-    if (Number.isInteger(tabId)) {
-      await storage.remove(keyFor(tabId));
-      emit("tab-closed");
-      await promoteNext();
-    }
+    if (Number.isInteger(tabId)) await storage.remove(keyFor(tabId));
+    await updateAlarm();
   }
 
-  async function enabledChanged(enabled) {
-    if (enabled) {
-      await promoteNext();
-      return;
-    }
-    const all = await storage.get(null);
-    for (const [key, record] of tabEntries(all)) {
-      if (record.attempt !== "queued") continue;
-      record.attempt = "failed";
-      record.queuedAt = 0;
-      record.queueOrder = 0;
-      record.fallback = true;
-      record.error = "Auto Download was turned off while queued.";
-      await storage.set({ [key]: record });
-    }
+  async function enabledChanged() {
     await updateAlarm();
-    emit("automation-disabled");
+  }
+
+  async function tick() {
+    await reconcile();
   }
 
   async function handleMessage(message, sender) {
@@ -393,7 +258,7 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
       const record = await getRecord(page.tabId);
       if (!record || record.documentId !== page.documentId) return { accepted: false };
       await expire(page.tabId, record);
-      await promoteNext();
+      await updateAlarm();
       return { accepted: true };
     });
     return { error: "unknown-message" };
@@ -405,8 +270,8 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     tabLoading: (tabId) => locked(() => tabLoading(tabId)),
     tabRemoved: (tabId) => locked(() => tabRemoved(tabId)),
     enabledChanged: (enabled) => locked(() => enabledChanged(enabled)),
-    recover: () => locked(() => promoteNext()),
-    tick: () => locked(() => promoteNext()) });
+    recover: () => locked(() => reconcile()),
+    tick: () => locked(() => tick()) });
 }
 
 globalThis.FFAD = globalThis.FFAD || {};

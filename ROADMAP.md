@@ -30,15 +30,17 @@
 - [x] Observe matching `chrome.downloads` events and display detection, attempt, download, and error states in the popup.
 - [x] Cover the MVP with mock browser tests; no real files are downloaded by the suite.
 - [x] User confirmed that one automatically clicked file started downloading in Chrome.
-- [x] Replace the one-shot `busy` rejection with a bounded FIFO queue for independently opened file pages. Queue state persists across service worker restarts; matching download-start events release the next page without waiting for file completion.
-- [x] Retest three successive file pages in real Chrome. User reported all three automatic downloads started, with about ten seconds between successive starts.
+- [x] Remove the global `busy`/FIFO scheduling behavior. Each tab/document now claims and confirms independently; a missing event never blocks another tab.
+- [ ] Retest three successive file pages in real Chrome with overlapping attempts. User-reported prior downloads do not validate this new architecture.
 - [ ] Verify whether the site's second-click claim and browser user-activation behavior affect future design.
 
 ## Phase 4 — Download confirmation
 
 - [x] Add the `downloads` permission for MVP start and interruption monitoring.
-- [x] Add privacy-safe relative timing and unmatched-event reason codes across queueing, clicking, download correlation, timeout, and queue release. The expanded mock suite passes 63 tests.
-- [ ] Measure a new real Chrome run with the timing diagnostics; identify the cause of the observed roughly ten-second gaps before changing correlation or timeout policy. **NOT TESTED.**
+- [x] Add privacy-safe relative timing and unmatched-event reason codes across queueing, clicking, download correlation, timeout, and queue release.
+- [x] Identify the live delay: three prompt download-start events lacked referrers, so each was rejected by the old matcher and the queue advanced only at timeout.
+- [x] Add a bounded filename fallback using the verified page title, click timing, unique download ID, and `downloads.onChanged` for delayed filename metadata. The mock suite passes 76 tests.
+- [ ] Retest three different file pages in real Chrome and verify independent `download-matched-filename` handling. **NOT TESTED.**
 - [ ] Validate referrer-based correlation on live downloads and investigate missing referrers or redirects before claiming broad reliability.
 - [ ] Correlate a user-opened supported page with real events across more site states, handle errors, and avoid duplicate counts.
 - Keep counters and status in extension storage without collecting browsing history or transmitting data.
