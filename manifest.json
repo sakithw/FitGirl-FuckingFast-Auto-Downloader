@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "FitGirl-FuckingFast Auto Downloader",
+  "version": "0.1.0",
+  "description": "Phase 1 scaffold for a user-controlled FuckingFast download assistant.",
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "action": {
+    "default_title": "FitGirl-FuckingFast Auto Downloader",
+    "default_popup": "src/popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fuckingfast.co/*"],
+      "js": ["src/content/index.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Local editor and operating-system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Future local tooling and generated packages
+node_modules/
+dist/
+build/
+coverage/
+*.crx
+*.pem
+
+# Local environment and logs
+.env
+.env.*
+*.log

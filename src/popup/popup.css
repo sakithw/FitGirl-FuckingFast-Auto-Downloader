@@ -1,0 +1,33 @@
+body {
+  box-sizing: border-box;
+  width: 290px;
+  margin: 0;
+  padding: 16px;
+  color: #202124;
+  background: #fff;
+  font: 14px/1.45 system-ui, sans-serif;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+p {
+  margin: 0 0 10px;
+}
+
+.status {
+  padding: 8px 10px;
+  border-radius: 5px;
+  color: #5c3b00;
+  background: #fff2cf;
+  font-weight: 600;
+}
+
+.version {
+  margin-bottom: 0;
+  color: #5f6368;
+  font-size: 12px;
+}
