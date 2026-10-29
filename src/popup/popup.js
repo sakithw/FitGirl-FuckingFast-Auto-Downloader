@@ -20,6 +20,7 @@ const labels = {
   unknown: "No page status",
   idle: "None",
   claimed: "Claimed",
+  queued: "Waiting in queue",
   clicked: "Clicked once",
   failed: "Failed",
   none: "Not confirmed",

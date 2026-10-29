@@ -1,6 +1,6 @@
 # Phase 3 MVP design and remaining verification
 
-The MVP now implements one guarded automatic click per verified page when explicitly enabled. It does not synthesize a second click, retry after an unconfirmed outcome, or interact with ad tabs. A real automatic click and browser download correlation have not yet been verified. The preconditions below remain relevant for extending the workflow.
+The MVP now implements one guarded automatic click per verified page when explicitly enabled. The user confirmed that a first automatically clicked file began downloading. Later independent pages now wait in a bounded FIFO queue while one click awaits confirmation; the queue fix still needs a real Chrome retest. It does not synthesize a second click, retry a failed page, or interact with ad tabs.
 
 ## Before extending the MVP
 

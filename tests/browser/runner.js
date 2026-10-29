@@ -297,10 +297,14 @@ await test("page navigation and repeated detection use the current file ID", asy
   root.remove();
 });
 
-function mockController({ enabled = true, tabId = 7, documentId = "test-document" } = {}) {
+function mockController({ enabled = true, tabId = 7, documentId = "test-document",
+  sendToTab = async () => false } = {}) {
   const data = {};
   let currentTime = Date.parse("2026-01-01T00:00:00.000Z");
   let autoEnabled = enabled;
+  const events = [];
+  const eventDetails = [];
+  const deadlines = [];
   const storage = {
     async get(key) {
       if (key === null) return structuredClone(data);
@@ -309,12 +313,21 @@ function mockController({ enabled = true, tabId = 7, documentId = "test-document
     async set(values) { Object.assign(data, structuredClone(values)); },
     async remove(key) { delete data[key]; }
   };
-  const controller = createDownloadController({
+  const configuration = {
     storage, getEnabled: async () => autoEnabled, now: () => currentTime,
-    fingerprint: async (value) => value
-  });
+    fingerprint: async (value) => value, sendToTab,
+    scheduleDeadline: async (when) => { deadlines.push(when); },
+    clearDeadline: async () => { deadlines.push(null); },
+    onEvent: (event, details) => {
+      events.push(event);
+      eventDetails.push({ event, ...details });
+    }
+  };
+  const controller = createDownloadController(configuration);
   const sender = { tab: { id: tabId }, frameId: 0, documentId, url: pageUrl };
-  return { controller, sender, setEnabled: (value) => { autoEnabled = value; },
+  return { controller, sender, events, eventDetails, deadlines, data, storage,
+    restart: () => createDownloadController(configuration),
+    setEnabled: (value) => { autoEnabled = value; },
     advance: (ms) => { currentTime += ms; }, now: () => currentTime };
 }
 
@@ -327,14 +340,21 @@ await test("one verified control is automatically clicked after a claim", async 
   const mock = mockController();
   await reportCandidate(mock);
   let clicks = 0;
-  root.querySelector("[hx-post]").addEventListener("click", () => { clicks += 1; });
+  const clickSequence = [];
+  root.querySelector("[hx-post]").addEventListener("click", () => {
+    clicks += 1;
+    clickSequence.push("dom-click");
+  });
   const engine = createAutoClickEngine({
     detect: () => detectDownloadControl(root, pageUrl),
     claim: () => mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, mock.sender),
-    report: (result) => mock.controller.handleMessage({ type: "ATTEMPT_RESULT", result }, mock.sender)
+    report: (result) => mock.controller.handleMessage({ type: "ATTEMPT_RESULT", result }, mock.sender),
+    onEvent: (code) => clickSequence.push(code)
   });
   assert(await engine.attempt() === "clicked" && clicks === 1, "Expected exactly one click");
-  assert(await engine.attempt() === "duplicate" && clicks === 1, "Duplicate click occurred");
+  assert(clickSequence.join(",") === "click-attempted,dom-click",
+    "Click timing diagnostic was not emitted immediately before the DOM click");
+  assert(await engine.attempt() === "duplicate-attempt" && clicks === 1, "Duplicate click occurred");
   const status = await mock.controller.handleMessage({ type: "GET_STATUS", tabId: 7 }, {});
   assert(status.attempt === "clicked" && status.download === "waiting", "Attempt state missing");
   root.remove();
@@ -351,7 +371,7 @@ await test("automation OFF denies the claim and never clicks", async () => {
     claim: () => mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, mock.sender),
     report: async () => {}
   });
-  assert(await engine.attempt() === "disabled" && clicks === 0, "Disabled automation clicked");
+  assert(await engine.attempt() === "automation-disabled" && clicks === 0, "Disabled automation clicked");
   root.remove();
 });
 
@@ -368,6 +388,60 @@ await test("turning automation OFF after a claim stops before clicking", async (
   });
   assert(await engine.attempt() === "disabled" && clicks === 0 && reports[0] === "disabled-after-claim",
     "Disabled setting did not stop the claimed click");
+  root.remove();
+});
+
+await test("queued content script resumes exactly one verified click", async () => {
+  const root = await mountedFixture("observed-valid");
+  let clicks = 0;
+  const reports = [];
+  root.querySelector("[hx-post]").addEventListener("click", () => { clicks += 1; });
+  const engine = createAutoClickEngine({
+    detect: () => detectDownloadControl(root, pageUrl),
+    claim: async () => ({ queued: true, reason: "attempt-queued" }),
+    report: async (result) => reports.push(result)
+  });
+  assert(await engine.attempt() === "attempt-queued" && engine.canAcceptQueuedGrant(),
+    "Queued engine did not wait");
+  assert(await engine.resume() === "clicked" && clicks === 1 && reports[0] === "clicked",
+    "Queued grant did not click exactly once");
+  assert(await engine.resume() === "duplicate-attempt" && clicks === 1, "Queued page clicked twice");
+  root.remove();
+});
+
+await test("early queued grant waits for the claim response", async () => {
+  const root = await mountedFixture("observed-valid");
+  let clicks = 0;
+  let resolveClaim;
+  root.querySelector("[hx-post]").addEventListener("click", () => { clicks += 1; });
+  const engine = createAutoClickEngine({
+    detect: () => detectDownloadControl(root, pageUrl),
+    claim: () => new Promise((resolve) => { resolveClaim = resolve; }),
+    report: async () => {}
+  });
+  const attempt = engine.attempt();
+  assert(engine.canAcceptQueuedGrant(), "Early grant could not be acknowledged");
+  const resume = engine.resume();
+  await Promise.resolve();
+  resolveClaim({ queued: true, reason: "attempt-queued" });
+  assert(await attempt === "attempt-queued", "Claim did not enter queue");
+  assert(await resume === "clicked" && clicks === 1, "Early grant was lost or duplicated");
+  root.remove();
+});
+
+await test("expired queued grant cannot click after the queue moves on", async () => {
+  const root = await mountedFixture("observed-valid");
+  let clicks = 0;
+  const reports = [];
+  root.querySelector("[hx-post]").addEventListener("click", () => { clicks += 1; });
+  const engine = createAutoClickEngine({
+    detect: () => detectDownloadControl(root, pageUrl),
+    claim: async () => ({ queued: true }),
+    report: async (result) => reports.push(result)
+  });
+  await engine.attempt();
+  assert(await engine.resume(Date.now() - 1) === "grant-expired" && clicks === 0 &&
+    reports[0] === "grant-expired", "Expired grant clicked the page");
   root.remove();
 });
 
@@ -388,8 +462,9 @@ await test("missing, ambiguous, and unsupported pages never claim or click", asy
   }
 });
 
-await test("global pending claim blocks a second tab without queuing", async () => {
+await test("second file queues while the first awaits confirmation, then starts", async () => {
   const shared = {};
+  const grants = [];
   const storage = {
     async get(key) { return key === null ? structuredClone(shared) :
       Object.hasOwn(shared, key) ? { [key]: structuredClone(shared[key]) } : {}; },
@@ -397,15 +472,282 @@ await test("global pending claim blocks a second tab without queuing", async () 
     async remove(key) { delete shared[key]; }
   };
   const controller = createDownloadController({ storage, getEnabled: async () => true,
-    now: () => Date.parse("2026-01-01T00:00:00Z"), fingerprint: async (value) => value });
+    now: () => Date.parse("2026-01-01T00:00:00Z"), fingerprint: async (value) => value,
+    sendToTab: async (tabId) => { grants.push(tabId); return true; } });
   const first = { tab: { id: 1 }, frameId: 0, documentId: "one", url: pageUrl };
   const second = { tab: { id: 2 }, frameId: 0, documentId: "two", url: "https://fuckingfast.co/other456" };
   for (const sender of [first, second]) {
     await controller.handleMessage({ type: "PAGE_STATUS", status: "candidate", valid: 1 }, sender);
   }
   assert((await controller.handleMessage({ type: "CLAIM_ATTEMPT" }, first)).allowed, "First claim denied");
-  assert((await controller.handleMessage({ type: "CLAIM_ATTEMPT" }, first)).reason === "duplicate", "Duplicate claim accepted");
-  assert((await controller.handleMessage({ type: "CLAIM_ATTEMPT" }, second)).reason === "busy", "Second tab was not blocked");
+  assert((await controller.handleMessage({ type: "CLAIM_ATTEMPT" }, first)).reason === "duplicate-attempt", "Duplicate claim accepted");
+  const queued = await controller.handleMessage({ type: "CLAIM_ATTEMPT" }, second);
+  assert(queued.queued && queued.reason === "attempt-queued", "Second tab was not queued");
+  assert((await controller.handleMessage({ type: "GET_STATUS", tabId: 2 }, {})).attempt === "queued",
+    "Queued status missing");
+  const item = { id: 50, referrer: pageWithoutFragment,
+    startTime: "2026-01-01T00:00:00.000Z", state: "in_progress" };
+  assert(await controller.downloadCreated(item, "our-extension"), "First download not observed");
+  assert(grants.join(",") === "2", "Second tab was not granted after download started");
+  assert((await controller.handleMessage({ type: "GET_STATUS", tabId: 2 }, {})).download === "waiting",
+    "Second tab was not promoted");
+});
+
+function queueHarness() {
+  const grants = [];
+  const mock = mockController({ sendToTab: async (tabId, documentId, message) => {
+    grants.push({ tabId, documentId, type: message.type });
+    return true;
+  } });
+  const first = mock.sender;
+  const second = { tab: { id: 8 }, frameId: 0, documentId: "second", url: "https://fuckingfast.co/part02" };
+  const third = { tab: { id: 9 }, frameId: 0, documentId: "third", url: "https://fuckingfast.co/part03" };
+  const report = (sender) => mock.controller.handleMessage(
+    { type: "PAGE_STATUS", status: "candidate", valid: 1, invalid: 0 }, sender);
+  const claim = (sender) => mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, sender);
+  const observe = (id, url, controller = mock.controller) => controller.downloadCreated({
+    id, referrer: url, startTime: new Date(mock.now()).toISOString(), state: "in_progress"
+  }, "our-extension");
+  return { mock, first, second, third, grants, report, claim, observe };
+}
+
+await test("matched download releases the next page in the same event turn", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  await q.mock.controller.handleMessage({ type: "ATTEMPT_RESULT", result: "clicked" }, q.first);
+  q.mock.advance(1200);
+  assert(await q.observe(101, pageWithoutFragment), "Matching download was missed");
+  assert(q.grants.length === 1 && q.grants[0].tabId === 8,
+    "Next page was not released before the download event resolved");
+  const matched = q.mock.eventDetails.find((event) => event.event === "download-matched");
+  const released = q.mock.eventDetails.find((event) => event.event === "next-attempt-released");
+  assert(matched.sinceClaimMs === 1200 && matched.sinceClickMs === 1200 &&
+    released.queueWaitMs === 1200,
+    "Confirmation or queue duration was measured incorrectly");
+  assert(q.mock.events.indexOf("download-matched") < q.mock.events.indexOf("next-attempt-released"),
+    "Queue advanced before download correlation");
+});
+
+await test("slow host response is measured without premature queue release", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.advance(9000);
+  assert(q.grants.length === 0, "Queue advanced before a download event");
+  assert(await q.observe(102, pageWithoutFragment), "Slow response failed correlation");
+  const received = q.mock.eventDetails.find((event) => event.event === "download-event-received");
+  assert(received.sinceClaimMs === 9000 && q.grants.length === 1,
+    "Host delay was not distinguished from queue-release delay");
+});
+
+await test("unmatched event reports a safe reason and preserves the timeout", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.advance(3000);
+  assert(!(await q.mock.controller.downloadCreated({ id: 103, referrer: "",
+    startTime: new Date(q.mock.now()).toISOString() }, "our-extension")),
+  "Download without referrer was attributed");
+  const unmatched = q.mock.eventDetails.find((event) => event.event === "download-unmatched");
+  assert(unmatched.reason === "missing-referrer" && unmatched.sinceClaimMs === 3000,
+    "Unmatched event omitted the sanitized reason or timing");
+  assert(q.grants.length === 0, "Unmatched event advanced the queue");
+  q.mock.advance(12000);
+  await q.mock.controller.tick();
+  const timedOut = q.mock.eventDetails.find((event) => event.event === "attempt-timed-out");
+  assert(timedOut.sinceClaimMs === 15000 && q.grants.length === 1,
+    "Timeout did not retain the original 15-second confirmation window");
+});
+
+await test("duplicate download event cannot release a second queued page", async () => {
+  const q = queueHarness();
+  for (const sender of [q.first, q.second, q.third]) await q.report(sender);
+  for (const sender of [q.first, q.second, q.third]) await q.claim(sender);
+  assert(await q.observe(104, pageWithoutFragment), "First event did not match");
+  assert(!(await q.observe(104, pageWithoutFragment)), "Duplicate event matched again");
+  assert(q.grants.length === 1 && q.grants[0].tabId === 8,
+    "Duplicate event advanced a second queued page");
+});
+
+await test("restarted worker retains confirmation timing and releases once", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.advance(4000);
+  const restarted = q.mock.restart();
+  await restarted.recover();
+  q.mock.advance(2000);
+  assert(await q.observe(105, pageWithoutFragment, restarted), "Restarted worker missed event");
+  const matched = q.mock.eventDetails.find((event) => event.event === "download-matched");
+  assert(matched.sinceClaimMs === 6000 && q.grants.length === 1,
+    "Restart lost persisted claim time or duplicated queue release");
+});
+
+await test("first, second, and third independent files start in FIFO order", async () => {
+  const q = queueHarness();
+  for (const sender of [q.first, q.second, q.third]) await q.report(sender);
+  assert((await q.claim(q.first)).allowed, "First file did not start");
+  assert((await q.claim(q.second)).queued, "Second file was not queued");
+  assert((await q.claim(q.third)).queued, "Third file was not queued");
+  assert(await q.observe(61, pageWithoutFragment), "First browser download not observed");
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8", "Second file was not first in queue");
+  assert(await q.observe(62, q.second.url), "Second browser download not observed");
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8,9", "Third file was not next in queue");
+  const firstStatus = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 7 }, {});
+  assert(firstStatus.download === "started", "Queue waited for the first large download to finish");
+});
+
+await test("quickly opened tabs are queued and granted in arrival order", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.claim(q.first);
+  const pages = [q.second, q.third,
+    { tab: { id: 10 }, frameId: 0, documentId: "fourth", url: "https://fuckingfast.co/part04" }];
+  await Promise.all(pages.map(q.report));
+  const claims = await Promise.all(pages.map(q.claim));
+  assert(claims.every((claim) => claim.queued), "A quick tab was rejected instead of queued");
+  await q.observe(63, pageWithoutFragment);
+  await q.observe(64, q.second.url);
+  await q.observe(65, q.third.url);
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8,9,10", "Queue order changed");
+});
+
+await test("stale pending confirmation expires and starts the next file", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.advance(16000);
+  await q.mock.controller.tick();
+  const firstStatus = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 7 }, {});
+  assert(firstStatus.download === "unconfirmed" && firstStatus.fallback, "Stale first attempt did not expire");
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8", "Queued second file was not promoted");
+  assert(q.mock.events.includes("attempt-timed-out"), "Expiry diagnostic missing");
+});
+
+await test("closed queued tab is skipped and a later file proceeds", async () => {
+  const q = queueHarness();
+  for (const sender of [q.first, q.second, q.third]) await q.report(sender);
+  for (const sender of [q.first, q.second, q.third]) await q.claim(sender);
+  await q.mock.controller.tabRemoved(8);
+  await q.observe(66, pageWithoutFragment);
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "9", "Closed queued tab blocked the queue");
+  const removed = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 8 }, {});
+  assert(removed.attempt === "idle", "Closed tab kept queued state");
+});
+
+await test("closing the active tab releases the next queued file", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  await q.mock.controller.tabRemoved(7);
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8", "Closed active tab kept the queue blocked");
+});
+
+await test("queued navigation cancels that page without blocking later files", async () => {
+  const q = queueHarness();
+  for (const sender of [q.first, q.second, q.third]) await q.report(sender);
+  for (const sender of [q.first, q.second, q.third]) await q.claim(sender);
+  await q.mock.controller.tabLoading(8);
+  await q.observe(67, pageWithoutFragment);
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "9", "Navigated queued tab was still granted");
+  const status = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 8 }, {});
+  assert(status.attempt === "failed" && status.fallback, "Navigated queue state not cleaned up");
+});
+
+await test("worker restart recovers a stored queue", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  const restarted = q.mock.restart();
+  await restarted.recover();
+  assert(q.grants.length === 0, "Restart caused a duplicate click before confirmation");
+  assert(await q.observe(68, pageWithoutFragment, restarted), "Restarted worker missed download event");
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8", "Restarted worker did not drain queue");
+});
+
+await test("missing referrer leaves queue pending only until the deadline", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  assert(!(await q.mock.controller.downloadCreated({ id: 69, referrer: "",
+    startTime: new Date(q.mock.now()).toISOString() }, "our-extension")),
+  "Uncertain download was attributed");
+  assert(q.grants.length === 0, "Queue advanced on an uncorrelated download");
+  q.mock.advance(16000);
+  await q.mock.controller.tick();
+  assert(q.grants.map((grant) => grant.tabId).join(",") === "8", "Queue did not recover after uncertainty timeout");
+});
+
+await test("turning Auto Download OFF cancels queued pages", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.setEnabled(false);
+  await q.mock.controller.enabledChanged(false);
+  await q.observe(70, pageWithoutFragment);
+  assert(q.grants.length === 0, "Disabled automation granted a queued page");
+  const status = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 8 }, {});
+  assert(status.attempt === "failed" && status.fallback, "Queued page did not show manual fallback");
+});
+
+await test("duplicate file in another tab is not queued for a second download", async () => {
+  const q = queueHarness();
+  const duplicate = { tab: { id: 8 }, frameId: 0, documentId: "duplicate",
+    url: `${pageWithoutFragment}?copy=1` };
+  await q.report(q.first);
+  await q.report(duplicate);
+  await q.claim(q.first);
+  assert((await q.claim(duplicate)).reason === "duplicate-attempt", "Duplicate file was queued");
+});
+
+await test("queue capacity is bounded and reports a manual fallback", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.claim(q.first);
+  for (let index = 0; index < 16; index += 1) {
+    const sender = { tab: { id: 20 + index }, frameId: 0, documentId: `doc-${index}`,
+      url: `https://fuckingfast.co/file${index}` };
+    await q.report(sender);
+    assert((await q.claim(sender)).queued, `Queue slot ${index} rejected`);
+  }
+  const overflow = { tab: { id: 40 }, frameId: 0, documentId: "overflow",
+    url: "https://fuckingfast.co/overflow" };
+  await q.report(overflow);
+  assert((await q.claim(overflow)).reason === "queue-full", "Queue accepted an unbounded request");
+  const status = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 40 }, {});
+  assert(status.fallback && status.error, "Queue overflow was silent");
+});
+
+await test("old queued pages expire after a delayed worker recovery", async () => {
+  const q = queueHarness();
+  await q.report(q.first);
+  await q.report(q.second);
+  await q.claim(q.first);
+  await q.claim(q.second);
+  q.mock.advance(301000);
+  await q.mock.restart().recover();
+  const status = await q.mock.controller.handleMessage({ type: "GET_STATUS", tabId: 8 }, {});
+  assert(status.attempt === "failed" && status.fallback && q.grants.length === 0,
+    "Expired queued page was clicked after long downtime");
 });
 
 await test("same-file reload preserves the one-click latch", async () => {
@@ -415,7 +757,7 @@ await test("same-file reload preserves the one-click latch", async () => {
     "First claim denied");
   const reloaded = { ...mock.sender, documentId: "new-document", url: pageWithoutFragment };
   await mock.controller.handleMessage({ type: "PAGE_STATUS", status: "candidate", valid: 1 }, reloaded);
-  assert((await mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, reloaded)).reason === "duplicate",
+  assert((await mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, reloaded)).reason === "duplicate-attempt",
     "Reloaded same file was clicked again");
 });
 
@@ -551,7 +893,7 @@ await test("no download after one click becomes unconfirmed with fallback", asyn
   mock.advance(16000);
   const status = await mock.controller.handleMessage({ type: "GET_STATUS", tabId: 7 }, {});
   assert(status.download === "unconfirmed" && status.fallback && status.error, "No-download fallback missing");
-  assert((await mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, mock.sender)).reason === "duplicate",
+  assert((await mock.controller.handleMessage({ type: "CLAIM_ATTEMPT" }, mock.sender)).reason === "duplicate-attempt",
     "Timed-out page clicked again");
 });
 
@@ -606,6 +948,11 @@ await test("popup shows download status, fallback, and persists the toggle", asy
   toggle.dispatchEvent(new Event("change"));
   await delay(10);
   assert(settings.autoEnabled, "Popup did not persist ON preference");
+  current.attempt = "queued";
+  current.download = "none";
+  await frame.contentWindow.refresh();
+  assert(frame.contentDocument.getElementById("attempt").textContent === "Waiting in queue",
+    "Popup did not show queued attempt");
   current.download = "unconfirmed";
   current.fallback = true;
   current.error = "No matching browser download was observed after one click.";

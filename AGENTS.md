@@ -23,3 +23,7 @@
 - Record the real-page URL shape, relevant sanitized HTML, button states, timing, and resulting browser download behavior before writing production selectors. Do not include tokens, personal data, or download URLs in fixtures or logs.
 - Verify popup state persistence, duplicate prevention, and download confirmation in Chrome before release.
 - Keep manual test instructions and known limitations in `README.md`.
+
+## Git workflow
+
+- Commit each completed, verified change set to the local repository before reporting it. Push only when the user asks.

@@ -3,7 +3,7 @@
   "name": "FitGirl-FuckingFast Auto Downloader",
   "version": "0.1.0",
   "description": "Optional single-click assistance for verified FuckingFast file pages.",
-  "permissions": ["storage", "downloads"],
+  "permissions": ["storage", "downloads", "alarms"],
   "background": {
     "service_worker": "src/background/service-worker.js"
   },

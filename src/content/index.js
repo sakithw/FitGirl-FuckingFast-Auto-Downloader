@@ -4,9 +4,13 @@
 const host = globalThis.FFAD.fuckingFast;
 if (host.isSupportedUrl(location.href)) {
   console.info("[FFAD] Supported host detected.");
+  const originalPagePath = new URL(location.href).pathname;
+  const contentStartedAt = performance.now();
+  const elapsed = () => Math.max(0, Math.round(performance.now() - contentStartedAt));
   let previous = "";
   let recheckLogged = false;
   let attemptStarted = false;
+  let queuedAtPageMs = null;
   const enabledAtLoad = chrome.storage.local.get({ autoEnabled: false })
     .then((settings) => settings.autoEnabled === true)
     .catch(() => false);
@@ -22,7 +26,30 @@ if (host.isSupportedUrl(location.href)) {
     detect,
     claim: () => send("CLAIM_ATTEMPT"),
     report: (result) => send("ATTEMPT_RESULT", { result }),
-    isEnabled: async () => (await chrome.storage.local.get({ autoEnabled: false })).autoEnabled === true
+    isEnabled: async () => (await chrome.storage.local.get({ autoEnabled: false })).autoEnabled === true,
+    onEvent: (code) => console.info(`[FFAD] ${code}; page t+${elapsed()}ms.`)
+  });
+
+  const reportOutcome = (outcome) => {
+    if (outcome === "attempt-queued") queuedAtPageMs = elapsed();
+    console.info(`[FFAD] Automatic attempt: ${outcome}; page t+${elapsed()}ms.`);
+    if (outcome === "clicked") setTimeout(() => { send("NO_DOWNLOAD"); }, 16000);
+  };
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "FFAD_QUEUE_GRANTED") return;
+    if (!engine.canAcceptQueuedGrant() || !host.isSupportedUrl(location.href) ||
+        new URL(location.href).pathname !== originalPagePath) {
+      sendResponse({ accepted: false });
+      return;
+    }
+    console.info(`[FFAD] queue-grant-received; page t+${elapsed()}ms; queueWaitMs=${
+      queuedAtPageMs === null ? "unknown" : elapsed() - queuedAtPageMs}.`);
+    sendResponse({ accepted: true });
+    engine.resume(message.expiresAt).then(reportOutcome).catch(() => {
+      send("ATTEMPT_RESULT", { result: "click-error" });
+      console.error("[FFAD] Automatic attempt: click-error.");
+    });
   });
 
   const disconnect = globalThis.FFAD.watchForCandidate(document, detect,
@@ -43,10 +70,7 @@ if (host.isSupportedUrl(location.href)) {
       if (!(await enabledAtLoad)) return;
       await reported;
       const outcome = await engine.attempt();
-      console.info(`[FFAD] Automatic attempt: ${outcome}.`);
-      if (outcome === "clicked") {
-        setTimeout(() => { send("NO_DOWNLOAD"); }, 16000);
-      }
+      reportOutcome(outcome);
     },
     {
       debounceMs: 100,

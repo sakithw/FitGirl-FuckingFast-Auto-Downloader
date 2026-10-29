@@ -4,7 +4,19 @@ importScripts("../hosts/fuckingfast.js", "controller.js");
 
 const controller = globalThis.FFAD.createDownloadController({
   storage: chrome.storage.session,
-  getEnabled: async () => (await chrome.storage.local.get({ autoEnabled: false })).autoEnabled === true
+  getEnabled: async () => (await chrome.storage.local.get({ autoEnabled: false })).autoEnabled === true,
+  sendToTab: async (tabId, documentId, message) => {
+    const response = await chrome.tabs.sendMessage(tabId, message, { documentId });
+    return response?.accepted === true;
+  },
+  scheduleDeadline: (when) => chrome.alarms.create("ffad-queue", { when }),
+  clearDeadline: () => chrome.alarms.clear("ffad-queue"),
+  onEvent: (code, details) => {
+    const fields = ["tMs", "sinceClaimMs", "sinceClickMs", "queueWaitMs", "queueDepth", "reason"]
+      .filter((key) => details[key] !== null && details[key] !== undefined)
+      .map((key) => `${key}=${details[key]}`);
+    console.info(`[FFAD] ${code}; ${fields.join("; ")}.`);
+  }
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -36,4 +48,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") controller.tabLoading(tabId).catch(() => {});
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "ffad-queue") controller.tick().catch(() => {
+    console.error("[FFAD] Queue deadline could not be processed.");
+  });
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.autoEnabled) {
+    controller.enabledChanged(changes.autoEnabled.newValue === true).catch(() => {});
+  }
+});
+
+controller.recover().catch(() => {
+  console.error("[FFAD] Queue recovery failed.");
 });
