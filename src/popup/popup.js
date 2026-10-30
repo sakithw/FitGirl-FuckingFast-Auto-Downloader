@@ -1,69 +1,140 @@
 "use strict";
 
-const version = chrome.runtime.getManifest().version;
-document.getElementById("version").textContent = `Version ${version}`;
+function createPopupController(api, root, { requestTimeoutMs = 2000 } = {}) {
+  const get = (id) => root.getElementById ? root.getElementById(id) : root.querySelector(`#${id}`);
+  const action = get("automation-action");
+  const label = get("action-label");
+  const card = get("automation-card");
+  const title = get("automation-title");
+  const description = get("automation-description");
+  const check = get("status-check");
+  const pause = get("status-pause");
+  const page = get("page-status");
+  const instruction = get("page-instruction");
+  const activity = get("activity-state");
+  const fallback = get("fallback");
+  const error = get("error");
+  let refreshId = 0;
+  let saving = false;
+  let settingKnown = false;
+  const detections = new Set(["unknown", "candidate", "missing", "invalid", "ambiguous",
+    "error", "unsupported-page", "unsupported-host"]);
+  get("version").textContent = `v${api.runtime.getManifest().version}`;
 
-const toggle = document.getElementById("auto-enabled");
-const detection = document.getElementById("detection");
-const attempt = document.getElementById("attempt");
-const download = document.getElementById("download");
-const fallback = document.getElementById("fallback");
-const error = document.getElementById("error");
-
-const labels = {
-  candidate: "Verified candidate",
-  missing: "Control missing",
-  invalid: "Invalid control",
-  ambiguous: "Ambiguous controls",
-  "unsupported-page": "Unsupported page",
-  "unsupported-host": "Unsupported host",
-  unknown: "No page status",
-  idle: "None",
-  claimed: "Claimed",
-  clicked: "Clicked once",
-  failed: "Failed",
-  none: "Not confirmed",
-  waiting: "Waiting for event",
-  started: "Matching download started",
-  complete: "Download complete",
-  interrupted: "Download interrupted",
-  unconfirmed: "No matching download"
-};
-
-async function refresh() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const state = await chrome.runtime.sendMessage({ type: "GET_STATUS", tabId: tab?.id });
-    toggle.checked = state.enabled === true;
-    detection.textContent = labels[state.detection] || state.detection;
-    attempt.textContent = labels[state.attempt] || state.attempt;
-    download.textContent = labels[state.download] || state.download;
-    fallback.hidden = !state.fallback;
-    error.hidden = !state.error;
-    error.textContent = state.error || "";
-  } catch {
-    detection.textContent = "Status unavailable";
-    error.hidden = false;
-    error.textContent = "Could not read extension status. Reload the extension.";
+  function pageContext(tab) {
+    if (typeof tab?.url !== "string") return "unknown";
+    try {
+      const url = new URL(tab.url);
+      if (["chrome:", "chrome-extension:", "chrome-search:", "edge:", "about:"].includes(url.protocol)) return "restricted";
+      return url.protocol === "https:" && url.hostname === "fuckingfast.co" && url.port === "" &&
+        !url.username && !url.password && /^\/[A-Za-z0-9_-]+$/.test(url.pathname) ? "supported" : "unrelated";
+    } catch { return "unknown"; }
   }
+
+  async function bounded(work) {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(work),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("request-timeout")), requestTimeoutMs); })
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+
+  function showError(message) {
+    error.hidden = !message;
+    error.textContent = message || "";
+  }
+
+  function render(state) {
+    settingKnown = typeof state.enabled === "boolean";
+    const enabled = state.enabled === true;
+    card.classList.remove("is-loading", "is-enabled", "is-disabled");
+    card.classList.add(enabled ? "is-enabled" : "is-disabled");
+    title.textContent = settingKnown ? enabled ? "Automation Enabled" : "Automation Paused" : "Setting unavailable";
+    description.textContent = settingKnown ? enabled ? "Ready for supported links" :
+      "Enable to automate downloads" : "Reload the extension to try again.";
+    check.toggleAttribute("hidden", !settingKnown || !enabled);
+    pause.toggleAttribute("hidden", settingKnown && enabled);
+    label.textContent = enabled ? "Disable Auto Download" : "Enable Auto Download";
+    action.classList.toggle("is-enabled", enabled);
+    action.disabled = saving || !settingKnown;
+
+    const nonFile = ["restricted", "unrelated"].includes(state.pageContext) ||
+      ["unsupported-page", "unsupported-host"].includes(state.detection);
+    const detectionLabels = { candidate: "Supported file page", missing: "Download control not found",
+      invalid: "Download control needs manual review", ambiguous: "Multiple download controls found",
+      error: "Could not inspect this file page." };
+    const supported = !nonFile && (state.pageContext === "supported" || Boolean(detectionLabels[state.detection]));
+    page.hidden = nonFile || (!supported && !state.statusFailure);
+    page.textContent = state.statusFailure ? supported ? "Could not read this file page's status." :
+      "Page details are not available." : detectionLabels[state.detection] ||
+        (supported ? "Page detection not available yet." : "");
+    instruction.textContent = supported ? "" : "Open a file link to begin";
+
+    const downloads = { started: "Download observed", complete: "Download complete",
+      interrupted: "Download interrupted", unconfirmed: "Download not confirmed", waiting: "Waiting for download confirmation" };
+    const attempts = { claimed: "Automatic click pending", clicked: "Automatic click attempted", failed: "Manual action required" };
+    activity.textContent = downloads[state.download] || attempts[state.attempt] || "";
+    activity.hidden = !activity.textContent;
+    fallback.hidden = !state.fallback;
+    showError(state.error);
+  }
+
+  async function refresh() {
+    const id = ++refreshId;
+    const [saved, tabs] = await Promise.allSettled([
+      bounded(() => api.storage.local.get({ autoEnabled: false })),
+      bounded(() => api.tabs.query({ active: true, currentWindow: true }))
+    ]);
+    if (id !== refreshId) return;
+    const settingAvailable = saved.status === "fulfilled" && saved.value && typeof saved.value === "object";
+    const enabled = settingAvailable ? saved.value.autoEnabled === true : undefined;
+    // Resolve the setting before asking the worker so an unanswered page check
+    // cannot keep the primary control stuck in its loading state.
+    render({ enabled, detection: "unknown" });
+    const tab = tabs.status === "fulfilled" ? tabs.value?.[0] : null;
+    const context = pageContext(tab);
+    let state = { detection: "unknown" };
+    if (!["restricted", "unrelated"].includes(context) && Number.isInteger(tab?.id)) {
+      try {
+        const response = await bounded(() => api.runtime.sendMessage({ type: "GET_STATUS", tabId: tab.id }));
+        // A valid status may include a real page/download error. An error-only
+        // protocol response has no detection state and is handled separately.
+        state = response && typeof response === "object" && detections.has(response.detection) ?
+          response : { detection: "unknown", statusFailure: "invalid-response" };
+      } catch { state.statusFailure = "request-failed"; }
+    } else if (tabs.status === "rejected") {
+      state.statusFailure = "tab-query-failed";
+    }
+    if (id !== refreshId) return;
+    render({ ...state, enabled, pageContext: context });
+    if (!settingAvailable) showError("Could not read Auto Download setting. Reload the extension.");
+  }
+
+  async function changeSetting() {
+    if (saving || !settingKnown) return;
+    saving = true;
+    action.disabled = true;
+    showError("");
+    try {
+      const current = (await bounded(() => api.storage.local.get({ autoEnabled: false }))).autoEnabled === true;
+      await bounded(() => api.storage.local.set({ autoEnabled: !current }));
+      await refresh();
+    } catch { showError("Could not save Auto Download preference."); }
+    finally { saving = false; action.disabled = !settingKnown; }
+  }
+
+  action.addEventListener("click", changeSetting);
+  api.storage.onChanged.addListener((changes, area) => {
+    if (area === "session" || (area === "local" && changes.autoEnabled)) refresh();
+  });
+  return Object.freeze({ refresh, render });
 }
 
-toggle.addEventListener("change", async () => {
-  toggle.disabled = true;
-  try {
-    await chrome.storage.local.set({ autoEnabled: toggle.checked });
-    await refresh();
-  } catch {
-    toggle.checked = !toggle.checked;
-    error.hidden = false;
-    error.textContent = "Could not save Auto Download preference.";
-  } finally {
-    toggle.disabled = false;
-  }
-});
+if (typeof chrome !== "undefined" && chrome.runtime?.getManifest && document.getElementById("version")) {
+  createPopupController(chrome, document).refresh();
+}
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "session" || (area === "local" && changes.autoEnabled)) refresh();
-});
-
-refresh();
+globalThis.FFAD = globalThis.FFAD || {};
+globalThis.FFAD.createPopupController = createPopupController;

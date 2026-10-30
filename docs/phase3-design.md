@@ -1,6 +1,6 @@
 # Phase 3 MVP design and remaining verification
 
-The MVP now implements one guarded automatic click per verified page when explicitly enabled. The user confirmed that a first automatically clicked file began downloading. Later independent pages now wait in a bounded FIFO queue while one click awaits confirmation; the queue fix still needs a real Chrome retest. It does not synthesize a second click, retry a failed page, or interact with ad tabs.
+The MVP implements one guarded automatic click per verified page when explicitly enabled. Each tab/document has independent attempt state; a pending confirmation in one tab does not block another. It does not synthesize a second click, retry a failed page, or interact with ad tabs.
 
 ## Before extending the MVP
 
@@ -16,4 +16,4 @@ The MVP now implements one guarded automatic click per verified page when explic
 4. Stop on ambiguity, CAPTCHA, access-control prompts, unexpected navigation, errors, or any step that requires a real user gesture.
 5. Prevent repeat requests and duplicate downloads with per-file and per-tab state. Reconcile that state with actual `chrome.downloads` events in Phase 4 before claiming success.
 
-The current implementation uses a worker claim before clicking and matches download events only when a unique pending attempt has a matching page referrer in a short window. It stores only a hash of the page origin and path in session state. Missing or ambiguous correlation stays unconfirmed and offers manual fallback.
+The current implementation uses a worker claim before clicking and prefers an exact supported-page referrer within a short window. Live Chrome events lacked referrers, so a missing-referrer fallback uses the page's verified title and download filename when available. Missing or ambiguous correlation stays unconfirmed and offers manual fallback; the filename path needs further live verification.

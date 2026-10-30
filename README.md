@@ -1,84 +1,129 @@
-# FitGirl-FuckingFast Auto Downloader
+﻿# FitGirl-FuckingFast Auto Downloader
 
-A Chrome Manifest V3 extension for manually opened FuckingFast file pages. When the user explicitly turns Auto Download ON, it makes at most one automatic click on a strictly verified control per document. Each tab/document has independent automation state; pending confirmation in one tab never blocks another. Auto Download defaults to OFF.
+A Chrome Manifest V3 extension that makes one guarded download-control click on each manually opened, supported FuckingFast file page when the user enables automation.
 
-## Current implementation
+**v1.0.0 release candidate.** The user reports that the compact popup, Enable/Disable setting, transparent icon, and automatic clicking across 6–7 independent file pages work in Chrome.
 
-- `manifest.json` scopes content scripts to `https://fuckingfast.co/*` and requests `storage`, `downloads`, and `alarms` permissions. The alarm is needed to release a pending queue after the service worker sleeps.
-- `src/hosts/fuckingfast.js` checks the exact HTTPS host, file-page route, and candidate DOM control. URLs with or without a filename fragment, and with optional query parameters, are accepted if the file ID matches the control's POST path.
-- `src/content/index.js` coordinates bounded detection and a one-click engine. It never clicks ads, retries, sends a direct POST, or performs a second click.
-- `src/background/` records claims before clicking and keeps independent per-tab/document confirmation state. A pending or missing download event in one tab does not block another. Its session state stores hashes of the page path and, when available, the verified page filename; it does not store a full URL, raw filename, or local download path. An alarm and content-script timeout release stale attempts after about 15 seconds, including after a service worker restart.
-- `src/popup/` provides the OFF-by-default toggle and status for detection, attempt, matching download, errors, and manual fallback.
-- `tests/fixtures/` and `tests/browser/` use mock HTML and fake download events. The suite never downloads a real file.
+## Features
 
-## Evidence and detector rules
+- Exact HTTPS host support for fuckingfast.co.
+- One automatic click per eligible document, with a fresh control validation immediately before the click.
+- Independent per-tab attempts: a pending or unconfirmed download in one tab never holds up another manually opened tab.
+- OFF-by-default automation with a saved Enable/Disable setting.
+- A compact 340px popup with separate automation, page, attempt, download, error, and manual-fallback states.
+- A transparent Circle Arrow icon at 16, 32, 48, 128, and 512 pixels.
+- Chrome download-event monitoring with conservative correlation and a bounded unconfirmed state.
 
-One supplied saved HTML page identifies the hostname `fuckingfast.co`, a page URL shaped like `https://fuckingfast.co/<FILE_ID>#<FILENAME>`, and an anchor with classes `link-button text-5xl gay-button`, text `DOWNLOAD`, `hx-post="/f/<FILE_ID>/go"`, `hx-swap="none"`, and `rel="noopener"`. The page shows a filename and size, includes htmx-related behavior, warns about ad download buttons, and says the first click opens ads while the second starts a download. These are observations from one saved page; the actual results of clicking and the stability of the markup have **not** been verified.
+The extension does not open file links, perform a second click, retry failed attempts, interact with advertisements, or bypass CAPTCHA, access controls, or Chrome security protections.
 
-The detector requires an exact HTTPS hostname, a single-segment file ID, an `a` element with all observed attributes and exact `DOWNLOAD` text, no `href`, a root-relative `hx-post` path shaped `/f/<FILE_ID>/go`, a matching page and POST file ID, and a visible, enabled element. It resolves the POST destination against the page and checks the origin. It returns `candidate` only for one valid control; multiple valid controls are `ambiguous`. Other `hx-post` elements are counted as invalid and never activated. Query parameters and the optional filename fragment do not affect the file-ID check.
+## Requirements
 
-**Fragment regression:** Older detection code required a nonempty URL fragment and therefore returned `unsupported-page` for `https://fuckingfast.co/<FILE_ID>`. The current parser extracts `<FILE_ID>` only from the pathname; the fragment is optional and query parameters do not change that ID. If Chrome still reports `unsupported-page` for a single-ID path, turn Auto Download OFF, reload the unpacked extension at `chrome://extensions`, then refresh the file page before retesting detection.
+- Chrome 102 or newer for the extension. Use a current Chrome build for development checks.
+- A FuckingFast file link that you are authorized to download.
+- Node.js 22 or newer and Chrome installed to run the developer test and packaging commands. Node.js is not needed to use the extension.
 
-The file ID grammar remains a conservative interpretation of the sample. The fixtures use placeholder IDs and filenames; they contain no external scripts or real download tokens. Countdown and error fixtures are synthetic and unverified.
+## Install the release candidate
 
-## Reload and test independent downloads in Chrome
+1. Obtain the local candidate ZIP: [FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip](dist/FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip).
+2. Extract it to a persistent folder. The extracted folder must contain manifest.json directly, alongside src/ and assets/.
+3. Open chrome://extensions and enable **Developer mode**.
+4. Click **Load unpacked** and select that extracted folder.
+5. Open the popup and check the saved automation setting.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Select **Load unpacked** and choose this project directory (the folder containing `manifest.json`).
-4. After code changes, click **Reload** on the extension card and refresh or reopen the test file page. New permissions may require Chrome approval. Open the popup and confirm Auto Download is **OFF**.
-5. Turn Auto Download **ON**, then manually open one authorized FuckingFast file page. Enabling it on an already loaded page does not trigger an immediate click; reload that page to test.
-6. Check the page Console for `[FFAD]` detection and `attempt-started` or `clicked`. Confirm the browser download in `chrome://downloads`.
-7. While that download is still active, manually open a **different** valid file link in a new tab. The second page should receive its own `clicked` attempt without waiting for the first page's download event. Repeat with additional independent tabs if desired; the extension never opens links for you.
-8. If a page shows `download-unconfirmed` or a manual fallback, the extension will not retry that document. You may click its verified control manually. Do not interact with ad tabs or bypass browser prompts.
-9. Turn Auto Download **OFF** after testing. Reload a page if you want to verify OFF behavior. Check `chrome://extensions` for worker or content-script errors.
+For development, select this repository's root folder instead. After changing source files, click **Reload** on the extension card and refresh or reopen supported file pages. Existing content-script documents keep their earlier code until refreshed. Chrome may preserve your saved Enable/Disable preference across an extension reload.
 
-The user confirmed live detection as `candidate; valid=1; invalid=0`. After the FIFO fix, three different manually opened file pages each started an automatic download with no manual button click. The service worker reported download events about 0.5–1.3 seconds after click reports, but each event lacked a referrer, so the queue advanced only after the 15-second timeout. The filename fallback described below has **not** yet been tested with live Chrome downloads. The [Phase 2.5 checklist](docs/phase2-live-test.md) records additional manual observations.
+The ZIP is a local release candidate. No GitHub release or Chrome Web Store publication has been created.
 
-## Diagnose independent-download timing
+## Enable and disable automation
 
-The controller handles each tab/document independently and does not wait for another tab's download completion. Live diagnostics showed that the previous referrer-only matcher rejected prompt download events because their referrer was missing. The fallback can match a filename when enough independent evidence is available.
+Click **Enable Auto Download** in the popup, then manually open one supported file page. Enabling the setting on a page that is already loaded does not trigger an immediate click; reload that page to test.
 
-After reloading the extension, open the service worker console from `chrome://extensions` and the Console for each file page. With Auto Download ON, manually open two or three different authorized file pages in new tabs. Compare these sanitized log codes and durations:
+Click **Disable Auto Download** to pause automation. Close and reopen the popup to check persistence. The supported-site checkmark identifies the configured host, not the current page or a successful download. Unknown or unrelated contexts show neutral guidance; actual page and download errors remain visible.
 
-- Page Console: `click-attempted` shows the instant before the verified DOM control is activated; `queue-grant-received` and `queueWaitMs` show how long a queued page waited before its grant arrived.
-- Worker Console: `attempt-queued`, `attempt-claimed`, `click-reported`, `download-event-received`, `download-matched-referrer` or `download-matched-filename`, `download-match-pending-metadata`, `download-unmatched-filename`, `download-unmatched-ambiguous`, or `download-unmatched-insufficient-evidence`, `attempt-confirmed` or `attempt-timed-out`, and `next-attempt-released`. Worker `tMs` is relative to that worker instance's start. `sinceClaimMs`, `sinceClickMs`, and `queueWaitMs` are relative durations in milliseconds; `sinceClickMs` can be absent if the event arrived before the click report.
-- Compare worker `click-reported` with `download-event-received`. A prompt event followed by `download-match-pending-metadata` means Chrome has not supplied a usable filename yet; `downloads.onChanged` may later supply one. `download-matched-filename` followed by `next-attempt-released` demonstrates prompt queue advancement. `download-unmatched-insufficient-evidence` or `download-unmatched-ambiguous` means the queue still waits for the original timeout. Compare each page's own timestamps separately; page and worker clocks have different origins.
+Chrome internal pages such as chrome://extensions cannot be automated. The popup shows guidance to open a file link rather than presenting that context as a generic error.
 
-Share only reason codes and relative durations. Do not copy full URLs, referrers, file IDs, filenames, network responses, or tokens into a report. The 15-second confirmation window remains unchanged. [Chrome alarms](https://developer.chrome.com/docs/extensions/reference/api/alarms) are a recovery mechanism and may fire late; a content-script message also prompts expiry after about 16 seconds. A matching download-start event still releases the next page immediately, even while the first file continues downloading. **Reduced live latency has not yet been verified.**
+## How automatic clicking works
 
-## Download confirmation limits
+1. The adapter accepts only HTTPS on the exact fuckingfast.co hostname and a single-segment file path. A filename fragment is optional, and a query does not change the pathname file identifier.
+2. Detection requires exactly one visible, enabled DOWNLOAD anchor with the inspected classes and htmx attributes. Its root-relative hx-post endpoint must be /f/&lt;FILE_ID&gt;/go and match the file identifier in the page pathname.
+3. The content script waits for ordinary DOM rendering for a bounded period, checks the saved setting, and asks the worker to record the document's attempt before clicking.
+4. The engine revalidates the same control, confirms that automation is still enabled, and clicks it once.
+5. The worker observes Chrome's download events. Confirmation is separate from the click attempt. Missing evidence ends as unconfirmed with manual fallback; it does not block independent tabs.
 
-Chrome's [`downloads.onCreated` event](https://developer.chrome.com/docs/extensions/reference/api/downloads) reports a browser download start, but its documented download item has no reliable initiating tab ID. An exact supported-page referrer match remains the preferred method. When the referrer is absent, the fallback requires exactly one pending attempt, a reported automatic click, a download start within 15 seconds after that click, one unique download ID, no competing no-referrer download events, and an exact normalized basename match between Chrome's download filename and the single visible `main h1` on the verified file page. A nonempty filename URL fragment must also agree with that page title. Filename matching is case sensitive and uses Unicode NFC; it does not remove Chrome's collision suffixes. The extension hashes the expected filename in session storage and never logs it or the local path. If the filename is absent on `onCreated`, it waits for a `filename` change in `downloads.onChanged`. A wrong, ambiguous, or late filename remains **unconfirmed**; the queue then advances after timeout. The download's `url` and `finalUrl` are not used as positive evidence because file delivery may use a different host. The extension does not query download history with `downloads.search`. A matching event is evidence that a browser download started, not proof that the synthetic click caused it. The extension does not call `chrome.downloads.download()` or collect browsing history.
+The host markup and filename extraction are based on supplied saved-page evidence. Additional host states and future site changes may require new evidence and adapter updates. The fixtures use placeholder file identifiers and never contain live download tokens.
 
-The queue holds up to 16 other file pages for at most five minutes. Queued pages are delivered to the original Chrome document; closed or navigated tabs are removed, and switching Auto Download OFF cancels queued attempts. The `alarms` permission is used to wake the worker for timeouts after it has gone idle. Chrome may delay an alarm, so a queued page can wait longer than 15 seconds if no matching download event arrives and its original page no longer sends the timeout message. A failed or expired attempt is never clicked again automatically.
+## Download confirmation and limitations
 
-## Automated verification
+An exact supported-page referrer is preferred. When referrer data is absent or insufficient, a unique matching expected filename and click/start timing can provide fallback evidence. The expected filename comes from the verified file page, not solely from a URL fragment. Download filenames are compared by basename after conservative Unicode normalization; case differences and Chrome collision suffixes such as “(1)” are not silently treated as exact matches.
 
-With Node.js and Chrome installed, run:
+Chrome may supply filename metadata later. The worker can retain a bounded candidate and inspect a later event or retrieve metadata for that specific observed download ID. It does not perform an unrestricted download-history query. Timing alone is not enough to confirm a download.
 
-```powershell
-node tests/run.mjs
-node -e "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')); console.log('manifest JSON OK')"
-node --check src/background/service-worker.js
-node --check src/background/controller.js
-node --check src/hosts/fuckingfast.js
-node --check src/content/observer.js
-node --check src/content/auto-click.js
-node --check src/content/index.js
-node --check src/popup/popup.js
-node --check tests/browser/runner.js
-node --check tests/run.mjs
-```
+Known limitations:
 
-Set `CHROME_PATH` if Chrome is outside the common locations checked by the test runner. The suite includes FIFO, referrer and filename correlation, delayed metadata, ambiguity, timeout, tab lifecycle, and worker restart mocks. A real three-file Chrome retest of filename matching is still required.
+- Browser download events have no reliable initiating tab ID. Referrer, filename, and timing evidence can remain missing or ambiguous.
+- A matching download event does not prove that the synthetic click caused it; an unrelated same-name download in the same window is a remaining attribution limitation.
+- A real download can start while the popup still reports **Download not confirmed**.
+- The DOM observer is bounded, the confirmation window is about 15 seconds, and Chrome can delay alarms or page timers.
+- Synthetic clicks may differ from manual user clicks when the host or browser requires user activation. The extension offers manual fallback and never bypasses that requirement.
+- Refreshing a page creates a new eligible document. One-click protection is per document, not a promise to deduplicate the same file across intentional reloads.
+- Only FuckingFast is supported. This is not a mass downloader or a link-opening tool.
 
-## Evidence still needed
+## Troubleshooting
 
-- At least two more sanitized file-page samples with distinct IDs and filenames, including nearby advertisement controls and any differences in classes or attributes.
-- Sanitized DOM and timing for initial, countdown, ready, error, and dynamically rendered states. The countdown and error fixtures currently model possibilities, not observed site behavior.
-- Real automatic-click observations for one file: whether the click opens an ad tab, whether Chrome blocks a popup, whether a matching download event appears, and whether the original page changes. Redact IDs, query strings, tokens, and full download URLs.
-- Manual observations of first and second clicks, htmx requests, and whether the browser requires a real user gesture. A synthetic click may behave differently.
-- Confirmation that the file ID grammar and no-`href` rule hold across more files.
+| Symptom | What to check |
+| --- | --- |
+| Automation Paused | Enable Auto Download, then open or reload a supported file page. |
+| No click | Check that the URL is HTTPS on exactly fuckingfast.co, and that the adapter sees one valid control. Missing, hidden, invalid, or ambiguous controls stop automation. |
+| Open a file link to begin | The current context is unrelated, restricted, or not yet identified. Open a supported file link manually. |
+| Page details are not available | The page-status request failed or timed out. The saved toggle remains usable. Check extension errors and reopen the popup. |
+| Download not confirmed | Check chrome://downloads. The file may have started without usable metadata. The extension will not retry that document automatically. |
+| Old UI or selectors | Reload the unpacked extension at chrome://extensions, then refresh the file page. |
 
-See `docs/phase3-design.md` for the MVP design and remaining verification.
+Inspect the extension card's **Errors** and **service worker** links at chrome://extensions and the supported page's Console for sanitized [FFAD] reason codes and relative durations. Do not share full URLs, file names, local paths, cookies, or tokens in bug reports.
+
+## Privacy and permissions
+
+This extension stores data locally; it does not claim that nothing is stored.
+
+| Location | Data |
+| --- | --- |
+| chrome.storage.local | The autoEnabled preference. It defaults to false when no value is saved. |
+| chrome.storage.session | Per-tab/document detection and attempt state, counts/reason codes, timestamps, download IDs, metadata-candidate bookkeeping, and SHA-256 fingerprints of the page origin/path and expected filename when available. |
+| Transient runtime memory/messages | Supported-page DOM details and filename evidence, sender URLs, and Chrome download metadata needed to evaluate a match. Raw values are not intentionally written to the session record or console. |
+
+The **storage** permission persists the preference and session state. **downloads** receives browser download metadata; Chrome can supply events for downloads unrelated to this extension, and the controller rejects events that it cannot associate safely. **alarms** supports bounded confirmation cleanup after the service worker sleeps. Content-script access is limited to https://fuckingfast.co/*; there is no all_urls, history, or broad tabs permission.
+
+The extension does not read downloaded file contents, run analytics, upload browsing data, fetch remote executable code, or send private information to an extension-operated server. Clicking the verified host control allows that page to perform its normal requests; the host's own behavior is outside the extension's control.
+
+The [security and privacy audit](docs/security-privacy-audit.md) records the source audit and remaining limits.
+
+## Interface and artwork
+
+The selected transparent Circle Arrow artwork is preserved. See the [white, dark, and checkerboard icon preview](docs/phase5.2-icon-preview.png) and [icon editing notes](docs/phase5.2-icon-notes.md). A new release popup screenshot has not been captured.
+
+The popup uses a horizontal status card, a readable 14px semibold power button, a single supported-site row, and a footer whose version comes from manifest.json. Activity is hidden when idle, and enabled automation is never used as proof of download success.
+
+## Development and verification
+
+Run from the repository root:
+
+    node tests/run.mjs
+    node scripts/package.mjs
+
+Set CHROME_PATH if Chrome is outside the common locations detected by the browser test runner. Automated checks use mocks and local fixtures and never start real downloads.
+
+Current release-candidate automated result: **82 registered, 82 executed, 82 passed, 0 failed, 0 skipped**. See [test-history audit](docs/test-history-audit.md) for the explanation of earlier test totals and restored coverage. The package validator writes dist/package-validation.json and validates the ZIP structure and extracted runtime files.
+
+User-reported real Chrome UI and 6–7 independent-file automation tests passed. **Loading the newly extracted candidate ZIP through Chrome's actual UI is NOT TESTED** until the user completes that separate check.
+
+## Release preparation and publication
+
+Version 1.0.0 is a proposed release-candidate version. It is not a statement that a public release exists. See [CHANGELOG.md](CHANGELOG.md) and the [prepared release notes](docs/release-notes-v1.0.0.md).
+
+After approval, review the working tree and test/package results, commit the approved changes, and push the existing branch to the existing repository. Create a GitHub release for tag v1.0.0 using the prepared title and notes; attach the validated ZIP and review the draft before publishing. No repository rename or Chrome Web Store publication is part of this task.
+
+## Affiliation and license
+
+This is an independent, unofficial third-party project. It is not affiliated with, endorsed by, or maintained by FitGirl Repacks or FuckingFast.
+
+No software license has been selected. A license requires explicit project-owner approval before one is added.

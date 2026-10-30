@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -7,21 +7,31 @@
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
-    <main>
-      <h1>FuckingFast Auto Downloader</h1>
-      <label class="toggle-row" for="auto-enabled">
-        <span>Auto Download</span>
-        <input id="auto-enabled" type="checkbox" aria-describedby="toggle-help">
-      </label>
-      <p id="toggle-help">OFF by default. Turn ON, then open or reload one file page.</p>
-      <dl class="status-list" aria-live="polite">
-        <div><dt>Detection</dt><dd id="detection">Checking…</dd></div>
-        <div><dt>Attempt</dt><dd id="attempt">None</dd></div>
-        <div><dt>Download</dt><dd id="download">Not confirmed</dd></div>
-      </dl>
-      <p class="status" id="fallback" hidden>Click the verified button manually if needed.</p>
-      <p class="error" id="error" role="status" hidden></p>
-      <p class="version" id="version"></p>
+    <main class="popup">
+      <header class="header">
+        <img class="brand-mark" src="../../assets/icons/icon-128.png" width="40" height="40" alt="">
+        <div><h1>FitGirl-FuckingFast</h1><p>Auto Downloader</p></div>
+      </header>
+      <section id="automation-card" class="automation-card is-loading" aria-labelledby="automation-title" aria-live="polite">
+        <svg id="automation-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path id="status-check" d="m5 12 4 4 10-10" hidden></path>
+          <path id="status-pause" d="M8 5v14M16 5v14"></path>
+        </svg>
+        <div id="automation-details">
+          <h2 id="automation-title">Loading automation</h2>
+          <p id="automation-description">Reading your saved setting.</p>
+        </div>
+      </section>
+      <button id="automation-action" class="action-button" type="button" disabled>
+        <svg id="action-power" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9M6.3 5.7a9 9 0 1 0 11.4 0"></path></svg>
+        <span id="action-label">Loading…</span>
+      </button>
+      <div class="site-row"><span>Supported site</span><strong>FuckingFast <span class="site-check" aria-hidden="true">✓</span></strong></div>
+      <p id="page-status" class="page-status" role="status" hidden></p>
+      <p id="activity-state" class="activity" role="status" hidden></p>
+      <p class="fallback" id="fallback" hidden>Manual action required. Use the verified download control if needed.</p>
+      <p class="error" id="error" role="alert" hidden></p>
+      <footer class="footer"><p id="page-instruction">Open a file link to begin</p><span id="version"></span></footer>
     </main>
     <script src="popup.js"></script>
   </body>

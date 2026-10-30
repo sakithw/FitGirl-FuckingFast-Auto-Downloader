@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -23,8 +23,9 @@ const server = createServer((request, response) => {
     response.writeHead(404).end();
     return;
   }
-  const type = path.endsWith(".js") ? "text/javascript" : path.endsWith(".html") ? "text/html" : "text/plain";
-  response.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
+  const type = path.endsWith(".js") ? "text/javascript" : path.endsWith(".html") ? "text/html" :
+    path.endsWith(".css") ? "text/css" : path.endsWith(".png") ? "image/png" : "text/plain";
+  response.writeHead(200, { "Content-Type": type === "image/png" ? type : `${type}; charset=utf-8` });
   response.end(readFileSync(path));
 });
 
@@ -36,11 +37,11 @@ try {
   const output = await new Promise((resolveRun, rejectRun) => {
     const child = spawn(chrome, [
       "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-      `--user-data-dir=${profile}`, "--virtual-time-budget=3000", "--dump-dom", url
+      `--user-data-dir=${profile}`, "--virtual-time-budget=15000", "--dump-dom", url
     ], { windowsHide: true });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => { child.kill(); rejectRun(new Error("Chrome test timed out")); }, 20000);
+    const timer = setTimeout(() => { child.kill(); rejectRun(new Error("Chrome test timed out")); }, 30000);
     child.stdout.on("data", (data) => { stdout += data; });
     child.stderr.on("data", (data) => { stderr += data; });
     child.on("error", (error) => { clearTimeout(timer); rejectRun(error); });
@@ -53,12 +54,20 @@ try {
   const match = output.match(/<pre id="results">(\{[^<]*\})<\/pre>/);
   if (!match) throw new Error("Browser tests did not report results");
   const result = JSON.parse(match[1]);
-  console.log(`${result.passed} browser tests passed`);
+  if (!Number.isInteger(result.registered) || result.registered !== result.executed ||
+      result.executed !== result.passed + result.failed || result.failed !== result.failures.length ||
+      result.skipped !== 0) throw new Error("Test accounting is incomplete or inconsistent");
+  mkdirSync(join(projectRoot, "dist"), { recursive: true });
+  writeFileSync(join(projectRoot, "dist", "test-results.json"), JSON.stringify(result, null, 2) + "\n");
+  console.log(`Tests: registered=${result.registered}; executed=${result.executed}; passed=${result.passed}; failed=${result.failed}; skipped=${result.skipped}`);
   if (result.failures.length) {
     for (const failure of result.failures) console.error(failure);
     process.exitCode = 1;
   }
 } finally {
   server.close();
+  if (!resolve(profile).startsWith(resolve(tmpdir()) + sep) || !profile.split(sep).at(-1).startsWith("ffad-test-")) {
+    throw new Error("Refusing to remove a profile outside the intended temporary directory");
+  }
   rmSync(profile, { recursive: true, force: true });
 }

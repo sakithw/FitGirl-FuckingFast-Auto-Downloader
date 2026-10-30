@@ -119,11 +119,43 @@ function detectDownloadControl(root, pageUrl) {
   return { status: "missing", count: 0, invalidCount: 0, reason: null, element: null };
 }
 
+function normalizeFilename(value, fromDownloadPath = false) {
+  if (typeof value !== "string") return null;
+  const name = fromDownloadPath ? value.split(/[\\/]/).pop() : value;
+  if (!name || name.length > 255 || /[\\/\u0000-\u001f\u007f]/.test(name)) return null;
+  const normalized = (fromDownloadPath ? name : name.trim()).normalize("NFC");
+  if (!normalized || normalized === "." || normalized === "..") return null;
+  return normalized;
+}
+
+// The supplied saved page shows one filename heading above the verified control.
+// Do not require a particular wrapper around that heading.
+function expectedFilename(root, pageUrl) {
+  const page = parseFilePageUrl(pageUrl);
+  if (!page) return null;
+  const control = detectDownloadControl(root, pageUrl);
+  if (control.status !== "candidate") return null;
+  const headings = Array.from(root.querySelectorAll("h1"));
+  if (headings.length !== 1 || !isVisible(headings[0]) ||
+      !(headings[0].compareDocumentPosition(control.element) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+  const title = normalizeFilename(headings[0].textContent);
+  if (!title) return null;
+  if (page.url.hash) {
+    let fragment;
+    try { fragment = normalizeFilename(decodeURIComponent(page.url.hash.slice(1))); }
+    catch { return null; }
+    if (!fragment || fragment !== title) return null;
+  }
+  return title;
+}
+
 globalThis.FFAD = globalThis.FFAD || {};
 globalThis.FFAD.fuckingFast = Object.freeze({
   supportedHostnames: FUCKINGFAST_HOSTNAMES,
   isSupportedUrl,
   parseFilePageUrl,
+  normalizeFilename,
+  expectedFilename,
   detectCandidate,
   detectDownloadControl
 });

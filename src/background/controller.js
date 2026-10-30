@@ -145,6 +145,16 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
       record.clickedAt = Number.isFinite(message.clickedAt) &&
         message.clickedAt >= record.attemptedAt && message.clickedAt <= now() ? message.clickedAt : now();
       emit("click-reported", { sinceClaimMs: elapsed(record.attemptedAt) });
+      const candidate = record.metadataDetails?.find((detail) =>
+        Number.isInteger(detail.id) && detail.startedAt >= record.clickedAt &&
+        detail.startedAt <= record.clickedAt + FFAD_TIMEOUT_MS &&
+        (!detail.referrerHash || detail.referrerHash === record.fingerprint ||
+          detail.filenameHash === record.expectedFilenameHash));
+      if (candidate) {
+        await confirmDownload(`${FFAD_STATE_PREFIX}${page.tabId}`, record, candidate.id,
+          candidate.state, candidate.referrerHash ? "referrer" : "filename");
+        return { accepted: true };
+      }
     } else if (["invalidated", "click-error", "disabled-after-claim", "grant-expired"].includes(message.result)) {
       record.attempt = "failed";
       record.download = "unconfirmed";
@@ -161,7 +171,10 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     const name = host.normalizeFilename(path, true);
     if (!name || !record.expectedFilenameHash || !record.clickedAt) return false;
     const hash = await fingerprint(`filename:${name}`);
-    if (hash !== record.expectedFilenameHash ||
+    const detail = record.metadataDetails?.find((candidate) => candidate.id === id);
+    const startedAt = detail?.startedAt;
+    if (hash !== record.expectedFilenameHash || !detail || !Number.isFinite(startedAt) ||
+        startedAt < record.clickedAt || startedAt - record.clickedAt > FFAD_TIMEOUT_MS ||
         now() - record.clickedAt > FFAD_TIMEOUT_MS) return false;
     return confirmDownload(key, record, id, state, "filename");
   }
@@ -181,16 +194,29 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
       const hash = await fingerprint(`${referrer.origin}${referrer.pathname}`);
       matches = pending.filter(([, record]) => record.fingerprint === hash);
     }
-    if (matches.length !== 1 && item.filename) {
+    const hasExplicitReferrer = typeof item.referrer === "string" && item.referrer.length > 0;
+    if (!hasExplicitReferrer && matches.length !== 1 && item.filename) {
       const nameHash = await fingerprint(`filename:${host.normalizeFilename(item.filename, true) || ""}`);
       matches = pending.filter(([, record]) => record.expectedFilenameHash === nameHash &&
-        record.attempt === "clicked");
+        record.attempt === "clicked" && startedAt >= record.clickedAt);
     }
-    if (matches.length !== 1) return false;
+    if (matches.length !== 1) {
+      if (!hasExplicitReferrer && !item.filename && pending.length === 1) {
+        const [key, record] = pending[0];
+        record.metadataCandidates = [item.id];
+        record.metadataDetails = [{ id: item.id, startedAt, filenameHash: null, referrerHash: null, state: item.state }];
+        await storage.set({ [key]: record });
+      }
+      return false;
+    }
     const [key, record] = matches[0];
     if (record.attempt === "claimed") {
       record.metadataCandidates = [item.id];
-      record.metadataDetails = [{ id: item.id, startedAt, filenameHash: null, state: item.state }];
+      record.metadataDetails = [{ id: item.id, startedAt,
+        filenameHash: item.filename ? await fingerprint(`filename:${host.normalizeFilename(item.filename, true) || ""}`) : null,
+        referrerHash: item.referrer && host.isSupportedUrl(item.referrer) ?
+          await fingerprint(`${new URL(item.referrer).origin}${new URL(item.referrer).pathname}`) : null,
+        state: item.state }];
       await storage.set({ [key]: record });
       return false;
     }
@@ -202,6 +228,13 @@ function createDownloadController({ storage, getEnabled, now = Date.now, fingerp
     const all = await storage.get(null);
     const match = entries(all).find(([key, record]) => record.download === "waiting" &&
       record.metadataCandidates?.includes(delta.id));
+    if (match && !delta.filename?.current) {
+      const metadata = await lookupDownload(delta.id);
+      if (metadata) {
+        if (metadata.filename) delta.filename = { current: metadata.filename };
+        if (metadata.state) delta.state = { current: metadata.state };
+      }
+    }
     if (match && delta.filename?.current) {
       const [key, record] = match;
       return matchFilename(key, record, delta.id, delta.filename.current, delta.state?.current);

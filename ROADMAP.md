@@ -37,9 +37,9 @@
 ## Phase 4 — Download confirmation
 
 - [x] Add the `downloads` permission for MVP start and interruption monitoring.
-- [x] Add privacy-safe relative timing and unmatched-event reason codes across queueing, clicking, download correlation, timeout, and queue release.
-- [x] Identify the live delay: three prompt download-start events lacked referrers, so each was rejected by the old matcher and the queue advanced only at timeout.
-- [x] Add a bounded filename fallback using the verified page title, click timing, unique download ID, and `downloads.onChanged` for delayed filename metadata. The mock suite passes 76 tests.
+- [x] Add privacy-safe relative timing and unmatched-event reason codes across clicking, download correlation, and per-document timeout.
+- [x] Identify the earlier live delay: prompt download-start events lacked referrers and were rejected by the old matcher.
+- [x] Add a bounded filename fallback using the verified page title, click timing, unique download ID, and `downloads.onChanged` for delayed filename metadata. The current browser suite includes independent-tab filename matching.
 - [ ] Retest three different file pages in real Chrome and verify independent `download-matched-filename` handling. **NOT TESTED.**
 - [ ] Validate referrer-based correlation on live downloads and investigate missing referrers or redirects before claiming broad reliability.
 - [ ] Correlate a user-opened supported page with real events across more site states, handle errors, and avoid duplicate counts.
@@ -47,9 +47,18 @@
 
 ## Phase 5 — Popup UI
 
-- [x] Provide a working ON/OFF toggle and MVP detection, attempt, download, error, and manual-fallback status.
-- [ ] Add counters and finish UI validation across popup openings and tab changes.
-- [x] Persist the preference locally and show session status from the worker.
+- [x] Replace the checkbox with the Minimal One-Click dark popup and semantic Enable/Disable button.
+- [x] Show automation readiness separately from page detection, click activity, download observation, and manual fallback.
+- [x] Preserve the existing `autoEnabled` storage key and OFF-by-default behavior.
+- [x] Add mock popup tests for loading, enable/disable persistence, reopening-compatible state, unsupported pages, and unconfirmed downloads.
+- [x] Phase 5.2: compact the popup to 340px with a 40px icon, one status card, one button, and a supported-site row; hide idle activity and redundant rows.
+- [x] Export transparent RGBA Circle Arrow icons at 16/32/48/128/512px and preview them on white, dark, and checkerboard backgrounds.
+- [x] Replace indefinite page checking with bounded requests and terminal states; keep saved preference controls available when page status fails.
+- [x] Run 28 browser tests, including icon alpha/dimensions, popup overflow, async failure recovery, persistence, and existing independent-tab/duplicate-click regressions.
+- [x] Phase 5.3: distinguish restricted/unrelated/unknown contexts from actual supported-page failures; preserve genuine error messages in valid worker status replies.
+- [x] Add the horizontal icon/status layout, explicit 14px semibold 46px power button, and helpful footer with the manifest version. Preserve the selected transparent icon files.
+- [x] Run the expanded 35-test browser suite, including internal pages, real status errors, error-only replies, footer version, typography, and content-driven dimensions.
+- [ ] Validate the popup manually in Chrome across popup reopening and tab changes.
 
 ## Phase 6 — Testing and release
 
