@@ -1,8 +1,77 @@
 ﻿# FitGirl-FuckingFast Auto Downloader
 
-A Chrome Manifest V3 extension that makes one guarded download-control click on each manually opened, supported FuckingFast file page when the user enables automation.
+A free extension for desktop Google Chrome that attempts to click the verified DOWNLOAD button when you manually open a supported FuckingFast file page. It saves repetitive clicking, while you still open each file link yourself.
 
-**v1.0.0 release candidate.** The user reports that the compact popup, Enable/Disable setting, transparent icon, and automatic clicking across 6–7 independent file pages work in Chrome.
+**Version 1.0.0 is available on GitHub.** The project owner reports successful Chrome testing across multiple independently opened file pages. This extension is for desktop Google Chrome.
+
+> **[Download FitGirl-FuckingFast Auto Downloader v1.0.0](https://github.com/sakithw/FitGirl-FuckingFast-Auto-Downloader/releases/tag/v1.0.0)**
+
+It saves repetitive clicking on the verified **DOWNLOAD** button. You still open each file link yourself; the extension does not find or open links for you.
+
+## Download
+
+1. Open the [v1.0.0 release page](https://github.com/sakithw/FitGirl-FuckingFast-Auto-Downloader/releases/tag/v1.0.0).
+2. Scroll to **Assets** near the bottom of the page. Click **Assets** if the list is collapsed.
+3. Select **FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip** and wait for it to finish downloading.
+
+Choose the named extension ZIP under **Assets**. Do not choose GitHub's **Source code (zip)** or **Source code (tar.gz)** archive; those are repository snapshots, not the ready-to-load extension package.
+
+## Install on Windows
+
+1. Open **File Explorer**, select **Downloads**, and find `FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip`.
+2. Right-click the ZIP and choose **Extract All...**, then choose **Extract**. Keep the extracted folder somewhere permanent; do not move or delete it after installation.
+3. Open **Google Chrome** on your computer.
+4. Enter `chrome://extensions` in Chrome's address bar and press **Enter**.
+5. Turn on **Developer mode** using the switch near the top-right corner.
+6. Click **Load unpacked** near the top-left of the page.
+7. Browse to the extracted folder. Select the folder where `manifest.json` is directly visible—not the ZIP or a parent folder—and click **Select Folder**.
+8. Confirm **FitGirl-FuckingFast Auto Downloader** appears in Chrome's extensions list.
+9. To keep the icon visible, click Chrome's puzzle-piece icon and click the pin next to the extension.
+10. Click the Circle Arrow extension icon, then click **Enable Auto Download**. The popup should say **Automation Enabled**.
+
+These steps are for desktop Chrome on Windows. You do not need VS Code, Git, a command prompt, or coding knowledge. Only install extensions from sources you trust. Developer mode is Chrome's manual installation method; it does not mean Chrome reviewed the extension.
+
+## Use the extension
+
+1. Make sure the popup says **Automation Enabled**.
+2. Manually open an individual file page on the supported `https://fuckingfast.co` host.
+3. The extension checks for the verified DOWNLOAD button and attempts one automatic click on that page.
+4. Check Chrome's download indicator or press **Ctrl+J** to view downloads. If the site or Chrome requires an action, follow its prompt or click the site's button yourself.
+5. Open other file links manually as needed. Independently opened tabs can each make their own attempt; one active download does not hold up another tab.
+
+A click attempt does not guarantee that a download will start or be confirmed. The extension does not retry or make a second automatic click.
+
+## Common problems
+
+| Problem | What to do |
+| --- | --- |
+| I cannot find the correct ZIP | Open the [v1.0.0 release page](https://github.com/sakithw/FitGirl-FuckingFast-Auto-Downloader/releases/tag/v1.0.0), expand **Assets**, and choose the named extension ZIP. |
+| Load unpacked will not accept the ZIP | Choose **Extract All** first, then load the extracted folder containing `manifest.json`. |
+| Chrome says the folder is not an extension | In the folder picker, select the inner extracted folder where `manifest.json` is visible. |
+| The extension icon is not visible | Click Chrome's puzzle-piece icon and pin the extension. |
+| The popup says Automation Paused | Click **Enable Auto Download** in the popup. |
+| A download does not start | Check that the page is on `https://fuckingfast.co`, automation is enabled, and the page shows its normal download button. Check **Ctrl+J**. If needed, click the site's button manually and follow normal site or Chrome prompts. |
+| Chrome asks about multiple downloads | Read Chrome's prompt. Allow it only if you trust the site and expect the downloads; the extension does not change Chrome's security settings. |
+| I moved or deleted the extracted folder | Restore it, or extract the release ZIP again and load the new folder from `chrome://extensions`. |
+| I am using Chrome on a phone | This unpacked-extension guide is for desktop Chrome; mobile Chrome does not provide the same installation workflow. |
+
+## Important information
+
+- The extension is free to download and use. It is not listed on the Chrome Web Store and is installed manually with Developer mode.
+- It supports only the configured `https://fuckingfast.co` file pages. You must open each file link yourself.
+- The unpacked installation does not update automatically from GitHub. Check the release page for updates and repeat the installation steps for a newer version.
+- Use it only for downloads you are authorized to access. Review Chrome's permission information before installing.
+- This is an independent project. It is not affiliated with, endorsed by, or maintained by FitGirl Repacks or FuckingFast.
+
+## Privacy
+
+The extension saves the Enable/Disable preference and temporary page and download-matching state locally in Chrome storage. It does not send browsing data to an extension-operated server, collect browsing history, or read downloaded file contents. Chrome download metadata is used to try to confirm whether a download started. Its permissions are `storage`, `downloads`, and `alarms`, and its page access is limited to `https://fuckingfast.co/*`.
+
+## Get help
+
+Report a problem on [GitHub Issues](https://github.com/sakithw/FitGirl-FuckingFast-Auto-Downloader/issues). Include your Chrome version, what you expected, and what happened. Do not post passwords, cookies, download tokens, or private file URLs.
+
+## Developer documentation
 
 ## Features
 
@@ -22,9 +91,9 @@ The extension does not open file links, perform a second click, retry failed att
 - A FuckingFast file link that you are authorized to download.
 - Node.js 22 or newer and Chrome installed to run the developer test and packaging commands. Node.js is not needed to use the extension.
 
-## Install the release candidate
+## Install from the GitHub release
 
-1. Obtain the local candidate ZIP: [FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip](dist/FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip).
+1. Download [FitGirl-FuckingFast-Auto-Downloader-v1.0.0.zip](https://github.com/sakithw/FitGirl-FuckingFast-Auto-Downloader/releases/tag/v1.0.0) from the release page's **Assets** section.
 2. Extract it to a persistent folder. The extracted folder must contain manifest.json directly, alongside src/ and assets/.
 3. Open chrome://extensions and enable **Developer mode**.
 4. Click **Load unpacked** and select that extracted folder.
@@ -95,7 +164,7 @@ The **storage** permission persists the preference and session state. **download
 
 The extension does not read downloaded file contents, run analytics, upload browsing data, fetch remote executable code, or send private information to an extension-operated server. Clicking the verified host control allows that page to perform its normal requests; the host's own behavior is outside the extension's control.
 
-The [security and privacy audit](docs/security-privacy-audit.md) records the source audit and remaining limits.
+The privacy details above describe the data the extension stores and the permissions declared in manifest.json.
 
 ## Interface and artwork
 
@@ -112,15 +181,9 @@ Run from the repository root:
 
 Set CHROME_PATH if Chrome is outside the common locations detected by the browser test runner. Automated checks use mocks and local fixtures and never start real downloads.
 
-Current release-candidate automated result: **82 registered, 82 executed, 82 passed, 0 failed, 0 skipped**. See [test-history audit](docs/test-history-audit.md) for the explanation of earlier test totals and restored coverage. The package validator writes dist/package-validation.json and validates the ZIP structure and extracted runtime files.
+Automated verification for v1.0.0: **82 registered, 82 executed, 82 passed, 0 failed, 0 skipped**. See [test-history audit](docs/test-history-audit.md) for the explanation of earlier test totals and restored coverage. The package validator writes dist/package-validation.json and validates the ZIP structure and extracted runtime files.
 
-User-reported real Chrome UI and 6–7 independent-file automation tests passed. **Loading the newly extracted candidate ZIP through Chrome's actual UI is NOT TESTED** until the user completes that separate check.
-
-## Release preparation and publication
-
-Version 1.0.0 is a proposed release-candidate version. It is not a statement that a public release exists. See [CHANGELOG.md](CHANGELOG.md) and the [prepared release notes](docs/release-notes-v1.0.0.md).
-
-After approval, review the working tree and test/package results, commit the approved changes, and push the existing branch to the existing repository. Create a GitHub release for tag v1.0.0 using the prepared title and notes; attach the validated ZIP and review the draft before publishing. No repository rename or Chrome Web Store publication is part of this task.
+The project owner reports successful real Chrome UI testing and automatic attempts across 6–7 independently opened file pages. Loading the published ZIP through Chrome's actual UI was not recorded as a separate test.
 
 ## Affiliation and license
 
